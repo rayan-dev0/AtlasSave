@@ -26,6 +26,8 @@ pub struct Profile {
     pub enabled: bool,
     #[serde(default)]
     pub cover_url: Option<String>,
+    #[serde(default)]
+    pub exe_path: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

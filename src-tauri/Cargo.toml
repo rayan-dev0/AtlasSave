@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -33,6 +33,7 @@ walkdir = "2"
 rfd = "0.14"
 ureq = { version = "2.9", features = ["json"] }
 urlencoding = "2.1"
+winreg = "0.55"
 
 
 

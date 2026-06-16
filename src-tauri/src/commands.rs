@@ -72,6 +72,7 @@ pub fn add_profile(
     name: String,
     source_path: String,
     cover_url: Option<String>,
+    exe_path: Option<String>,
 ) -> Result<Profile, String> {
     let mut config = state.config_manager.lock().unwrap();
     
@@ -93,6 +94,7 @@ pub fn add_profile(
         source_path: absolute_path,
         enabled: true,
         cover_url: final_cover_url,
+        exe_path,
     };
 
     config.data.profiles.push(profile.clone());
@@ -118,6 +120,7 @@ pub fn update_profile(
     source_path: String,
     enabled: bool,
     cover_url: Option<String>,
+    exe_path: Option<String>,
 ) -> Result<bool, String> {
     let mut config = state.config_manager.lock().unwrap();
     let mut found = false;
@@ -135,6 +138,7 @@ pub fn update_profile(
                 
             profile.enabled = enabled;
             profile.cover_url = cover_url.clone();
+            profile.exe_path = exe_path.clone();
 
             found = true;
             break;
@@ -931,3 +935,403 @@ pub fn trigger_git_sync(app_handle: AppHandle, state: State<'_, AppState>) -> Re
 
     Ok(())
 }
+
+fn trigger_backup_for_profile(
+    app_handle: &AppHandle,
+    state: &AppState,
+    profile: Profile,
+) -> Result<(), String> {
+    let config = state.config_manager.lock().unwrap();
+    let backups_root = config.backups_dir.clone();
+    let max_backups = config.data.global.max_backups;
+    let providers = config.data.providers.clone();
+    let uploader_sender = state.uploader.clone_sender();
+    let app_handle_clone = app_handle.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let archiver = Archiver::new(backups_root);
+        let name = profile.name.clone();
+        let source_path = PathBuf::from(&profile.source_path);
+
+        log_message(&app_handle_clone, format!("Post-game auto backup starting for: {}", name));
+        match archiver.archive_profile(&profile.id, &name, &source_path, max_backups) {
+            Ok(zip_path) => {
+                {
+                    let state = app_handle_clone.state::<AppState>();
+                    let mut config = state.config_manager.lock().unwrap();
+                    config.data.stats.total_backups += 1;
+                    config.data.stats.last_backup_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                    let file_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
+                    let mb_size = file_size as f64 / (1024.0 * 1024.0);
+                    config.data.stats.total_size_mb = (config.data.stats.total_size_mb + mb_size * 100.0).round() / 100.0;
+                    config.save();
+                }
+
+                uploader_sender.enqueue(UploadTask {
+                    file_path: zip_path,
+                    profile_name: name.clone(),
+                    providers: providers.clone(),
+                });
+
+                let _ = app_handle_clone.emit("stats-updated", ());
+                let _ = app_handle_clone.emit("backups-updated", ());
+                log_message(&app_handle_clone, format!("[SUCCESS] Auto backup complete for: {}", name));
+            }
+            Err(e) => {
+                log_message(&app_handle_clone, format!("Auto backup failed for {}: {}", name, e));
+            }
+        }
+    });
+
+    Ok(())
+}
+
+fn is_process_running(process_name: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("tasklist");
+        cmd.args(&["/NH", "/FI", &format!("IMAGENAME eq {}", process_name)]);
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        if let Ok(output) = cmd.output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return stdout.contains(process_name);
+        }
+    }
+    false
+}
+
+#[tauri::command]
+pub fn launch_game(
+    app_handle: AppHandle,
+    profile_id: String,
+    exe_path: String,
+) -> Result<(), String> {
+    let path = std::path::Path::new(&exe_path);
+    if !path.exists() {
+        return Err("Executable file does not exist at path.".to_string());
+    }
+
+    let process_name = path
+        .file_name()
+        .ok_or_else(|| "Invalid executable filename".to_string())?
+        .to_string_lossy()
+        .to_string();
+
+    let exe_dir = path
+        .parent()
+        .ok_or_else(|| "Invalid executable directory".to_string())?
+        .to_path_buf();
+
+    // Spawn the game process
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new(&exe_path);
+        cmd.current_dir(&exe_dir);
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.spawn().map_err(|e| format!("Failed to launch game executable: {}", e))?;
+    }
+
+    // Monitor in background Tokio task
+    let app_handle_clone = app_handle.clone();
+    let state_clone = app_handle.state::<AppState>();
+    
+    // De-serialize profile
+    let profile = {
+        let config = state_clone.config_manager.lock().unwrap();
+        config.data.profiles.iter().find(|p| p.id == profile_id).cloned()
+    };
+
+    if let Some(profile_data) = profile {
+        tauri::async_runtime::spawn(async move {
+            // 1. Pause watcher for this profile
+            {
+                let state = app_handle_clone.state::<AppState>();
+                let mut watcher = state.watcher.lock().unwrap();
+                watcher.stop_watching_profile(&profile_data.id);
+            }
+            log_message(
+                &app_handle_clone,
+                format!("Game Launched: {}. Pausing file system watcher for profile.", profile_data.name),
+            );
+
+            // Wait a few seconds for game process to appear
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            // 2. Query process list periodically
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                if !is_process_running(&process_name) {
+                    break;
+                }
+            }
+
+            // 3. Exited! Resume watcher and backup
+            log_message(
+                &app_handle_clone,
+                format!("Game Exited: {}. Resuming watcher and triggering backup.", profile_data.name),
+            );
+
+            {
+                let state = app_handle_clone.state::<AppState>();
+                let mut watcher = state.watcher.lock().unwrap();
+                watcher.start_watching_profile(&profile_data);
+            }
+
+            let state = app_handle_clone.state::<AppState>();
+            let _ = trigger_backup_for_profile(&app_handle_clone, &state, profile_data);
+        });
+    }
+
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct StorageStats {
+    pub total_size_bytes: u64,
+    pub backup_count: usize,
+    pub oldest_backup_time: String,
+    pub newest_backup_time: String,
+}
+
+#[tauri::command]
+pub fn get_profile_storage_stats(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<StorageStats, String> {
+    let backups_dir = {
+        let config = state.config_manager.lock().unwrap();
+        config.backups_dir.join(&profile_id)
+    };
+
+    let mut total_size_bytes = 0;
+    let mut backup_count = 0;
+    let mut oldest_time = None;
+    let mut newest_time = None;
+
+    if backups_dir.exists() && backups_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(backups_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "zip") {
+                    backup_count += 1;
+                    if let Ok(meta) = path.metadata() {
+                        total_size_bytes += meta.len();
+                        if let Ok(modified) = meta.modified() {
+                            let datetime: chrono::DateTime<chrono::Local> = modified.into();
+                            let formatted = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+                            if oldest_time.is_none() || formatted < *oldest_time.as_ref().unwrap() {
+                                oldest_time = Some(formatted.clone());
+                            }
+                            if newest_time.is_none() || formatted > *newest_time.as_ref().unwrap() {
+                                newest_time = Some(formatted);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(StorageStats {
+        total_size_bytes,
+        backup_count,
+        oldest_backup_time: oldest_time.unwrap_or_else(|| "N/A".to_string()),
+        newest_backup_time: newest_time.unwrap_or_else(|| "N/A".to_string()),
+    })
+}
+
+#[tauri::command]
+pub fn prune_profile_backups(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    keep_count: usize,
+) -> Result<usize, String> {
+    let backups_dir = {
+        let config = state.config_manager.lock().unwrap();
+        config.backups_dir.join(&profile_id)
+    };
+
+    if !backups_dir.exists() || !backups_dir.is_dir() {
+        return Ok(0);
+    }
+
+    let mut zip_files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&backups_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "zip") {
+                if let Ok(meta) = path.metadata() {
+                    if let Ok(modified) = meta.modified() {
+                        zip_files.push((path, modified));
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort by modified time descending (newest first)
+    zip_files.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let mut deleted_count = 0;
+    if zip_files.len() > keep_count {
+        for (path, _) in &zip_files[keep_count..] {
+            if let Ok(_) = std::fs::remove_file(path) {
+                deleted_count += 1;
+            }
+        }
+    }
+
+    log_message(
+        &app_handle,
+        format!("Pruned {} older backup files for profile {}.", deleted_count, profile_id),
+    );
+
+    let _ = app_handle.emit("backups-updated", ());
+    Ok(deleted_count)
+}
+
+#[derive(serde::Serialize)]
+pub struct DetectedGame {
+    pub name: String,
+    pub exe_path: String,
+    pub save_path_suggestion: Option<String>,
+}
+
+#[tauri::command]
+pub fn scan_steam_library() -> Result<Vec<DetectedGame>, String> {
+    let mut detected_games = Vec::new();
+
+    // 1. Get Steam installation path
+    let program_files_86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
+    let default_steam_dir = std::path::PathBuf::from(&program_files_86).join("Steam");
+    let mut steam_dirs = vec![default_steam_dir];
+
+    // Try registry lookup
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(steam_key) = hkcu.open_subkey("Software\\Valve\\Steam") {
+            if let Ok(path_str) = steam_key.get_value::<String, _>("SteamPath") {
+                let path = std::path::PathBuf::from(path_str.replace('/', "\\"));
+                if path.exists() && !steam_dirs.contains(&path) {
+                    steam_dirs.push(path);
+                }
+            }
+        }
+    }
+
+    let mut library_paths = Vec::new();
+    for steam_dir in &steam_dirs {
+        if steam_dir.exists() {
+            library_paths.push(steam_dir.clone());
+            
+            // Read libraryfolders.vdf
+            let lib_vdf = steam_dir.join("steamapps").join("libraryfolders.vdf");
+            if lib_vdf.exists() {
+                if let Ok(content) = std::fs::read_to_string(&lib_vdf) {
+                    // Quick parse path lines
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.to_lowercase().contains("\"path\"") {
+                            let parts: Vec<&str> = trimmed.split('"').collect();
+                            if parts.len() >= 4 {
+                                let path_str = parts[3].replace("\\\\", "\\");
+                                let path = std::path::PathBuf::from(path_str);
+                                if path.exists() && !library_paths.contains(&path) {
+                                    library_paths.push(path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Scan each library for common folders
+    for lib in &library_paths {
+        let common_dir = lib.join("steamapps").join("common");
+        if common_dir.exists() && common_dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(common_dir) {
+                for game_dir_entry in entries.flatten() {
+                    let game_dir = game_dir_entry.path();
+                    if game_dir.is_dir() {
+                        // Scan for game executable
+                        if let Some(game_name) = game_dir.file_name().and_then(|n| n.to_str()) {
+                            let exes = find_game_executables(&game_dir);
+                            for exe in exes {
+                                // Try auto-detection
+                                let suggestion = detector::detect_save_directory(exe.clone())
+                                    .map(|p| p.to_string_lossy().to_string());
+                                
+                                detected_games.push(DetectedGame {
+                                    name: game_name.to_string(),
+                                    exe_path: exe.to_string_lossy().to_string(),
+                                    save_path_suggestion: suggestion,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(detected_games)
+}
+
+fn find_game_executables(game_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut exes = Vec::new();
+    
+    // Look for executables in main dir and Binaries/Win64
+    let paths_to_check = vec![
+        game_dir.to_path_buf(),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("bin").join("x64"),
+        game_dir.join("Bin"),
+    ];
+
+    for dir in paths_to_check {
+        if dir.exists() && dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().map_or(false, |ext| ext == "exe") {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            let lower = name.to_lowercase();
+                            // Skip installers, webview helpers, steam_helper, crash reporter
+                            if !lower.contains("crash") 
+                                && !lower.contains("unity") 
+                                && !lower.contains("cef") 
+                                && !lower.contains("helper") 
+                                && !lower.contains("install") 
+                                && !lower.contains("setup") 
+                                && !lower.contains("config")
+                            {
+                                exes.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Keep only the largest exe if multiple found
+    if exes.len() > 1 {
+        exes.sort_by(|a, b| {
+            let size_a = std::fs::metadata(a).map(|m| m.len()).unwrap_or(0);
+            let size_b = std::fs::metadata(b).map(|m| m.len()).unwrap_or(0);
+            size_b.cmp(&size_a)
+        });
+        exes.truncate(1);
+    }
+
+    exes
+}
+

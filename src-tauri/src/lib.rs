@@ -49,6 +49,10 @@ pub fn run() {
             commands::get_log_history,
             commands::clear_log_history,
             commands::trigger_git_sync,
+            commands::launch_game,
+            commands::get_profile_storage_stats,
+            commands::prune_profile_backups,
+            commands::scan_steam_library,
         ])
         .setup(|app| {
             let config_manager = config::ConfigManager::new();

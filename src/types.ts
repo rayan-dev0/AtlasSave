@@ -17,6 +17,7 @@ export interface Profile {
   source_path: string;
   enabled: boolean;
   cover_url?: string | null;
+  exe_path?: string | null;
 }
 
 export interface LocalBackupProvider {

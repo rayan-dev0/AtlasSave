@@ -78,6 +78,10 @@ function App() {
 
   // Load configuration on mount
   useEffect(() => {
+    // Load and apply saved theme
+    const savedTheme = localStorage.getItem("atlas_theme") || "stitch";
+    document.documentElement.className = savedTheme === "stitch" ? "" : `theme-${savedTheme}`;
+
     loadConfig();
     checkWatcherState();
 
@@ -238,11 +242,11 @@ function App() {
   };
 
   // CRUD Profiles
-  const handleAddProfile = async (name: string, path: string, coverUrl: string | null) => {
+  const handleAddProfile = async (name: string, path: string, coverUrl: string | null, exePath: string | null = null) => {
     if (!name.trim() || !path.trim()) return;
 
     try {
-      await invoke("add_profile", { name: name.trim(), sourcePath: path.trim(), coverUrl });
+      await invoke("add_profile", { name: name.trim(), sourcePath: path.trim(), coverUrl, exePath });
       setNewProfileName("");
       setNewProfilePath("");
       setGameExePath("");
@@ -253,9 +257,16 @@ function App() {
     }
   };
 
-  const handleSaveProfileEdit = async (id: string, name: string, path: string, enabled: boolean, coverUrl?: string | null) => {
+  const handleSaveProfileEdit = async (
+    id: string,
+    name: string,
+    path: string,
+    enabled: boolean,
+    coverUrl?: string | null,
+    exePath?: string | null
+  ) => {
     try {
-      await invoke("update_profile", { id, name, sourcePath: path, enabled, coverUrl });
+      await invoke("update_profile", { id, name, sourcePath: path, enabled, coverUrl, exePath });
       setEditingProfileId(null);
       loadConfig();
     } catch (err) {
@@ -281,6 +292,7 @@ function App() {
         sourcePath: profile.source_path,
         enabled: !profile.enabled,
         coverUrl: profile.cover_url,
+        exePath: profile.exe_path,
       });
       loadConfig();
     } catch (err) {

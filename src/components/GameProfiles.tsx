@@ -19,8 +19,8 @@ interface GameProfilesViewProps {
   detecting: boolean;
   handleBrowseDir: (setter: (val: string) => void) => void;
   handleBrowseFileAndDetect: () => void;
-  handleAddProfile: (name: string, path: string, coverUrl: string | null) => void;
-  handleSaveProfileEdit: (id: string, name: string, path: string, enabled: boolean, coverUrl?: string | null) => void;
+  handleAddProfile: (name: string, path: string, coverUrl: string | null, exePath: string | null) => void;
+  handleSaveProfileEdit: (id: string, name: string, path: string, enabled: boolean, coverUrl?: string | null, exePath?: string | null) => void;
   handleRemoveProfile: (id: string) => void;
   handleToggleProfileEnabled: (profile: Profile) => void;
 }
@@ -48,6 +48,7 @@ export const GameProfilesView: React.FC<GameProfilesViewProps> = ({
   handleToggleProfileEnabled,
 }) => {
   const [isAdding, setIsAdding] = useState(false);
+  const [showSteamScanner, setShowSteamScanner] = useState(false);
   
   // Separate states for cover art search and selection in the Add form
   const [coverSearchTerm, setCoverSearchTerm] = useState("");
@@ -122,6 +123,12 @@ export const GameProfilesView: React.FC<GameProfilesViewProps> = ({
           <h1 className="page-title">Game Profiles</h1>
           <p className="page-subtitle">Track directories for auto save scans and trigger rotations.</p>
         </div>
+        <button className="btn btn-outline" onClick={() => setShowSteamScanner(true)}>
+          <svg style={{ width: 14, height: 14, marginRight: 6 }} fill="currentColor" viewBox="0 0 16 16">
+            <path d="M14.285 4.887A8.04 8.04 0 0 0 16 0H0v16h8.868a8.04 8.04 0 0 0 5.417-3.113l-3.32-3.32a3.85 3.85 0 0 1-2.965.867 3.858 3.858 0 0 1-3.218-3.218 3.858 3.858 0 0 1 .867-2.965l3.32-3.32a3.85 3.85 0 0 1 2.965-.867 3.858 3.858 0 0 1 3.218 3.218 3.858 3.858 0 0 1-.867 2.965l3.32 3.32ZM7.785 8a.215.215 0 1 1-.43 0 .215.215 0 0 1 .43 0ZM13 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/>
+          </svg>
+          SCAN STEAM LIBRARY
+        </button>
       </header>
 
       {/* Grid of tracked profiles */}
@@ -164,7 +171,7 @@ export const GameProfilesView: React.FC<GameProfilesViewProps> = ({
                   <span className="form-label" style={{ fontSize: "9px" }}>WATCH ROUTE</span>
                   <div className="profile-card-path-container">
                     <svg className="profile-card-path-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15a2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
                     </svg>
                     <span className="profile-card-path" title={profile.source_path}>{profile.source_path}</span>
                   </div>
@@ -263,7 +270,7 @@ export const GameProfilesView: React.FC<GameProfilesViewProps> = ({
 
           <form onSubmit={(e) => {
             e.preventDefault();
-            handleAddProfile(newProfileName, newProfilePath, selectedCoverUrl);
+            handleAddProfile(newProfileName, newProfilePath, selectedCoverUrl, gameExePath || null);
             setIsAdding(false);
           }}>
             <div className="profile-form-grid">
@@ -490,6 +497,15 @@ export const GameProfilesView: React.FC<GameProfilesViewProps> = ({
           </form>
         </div>
       )}
+      {showSteamScanner && (
+        <SteamLibraryScanner
+          config={config}
+          onClose={() => setShowSteamScanner(false)}
+          onImport={(name, path, coverUrl, exePath) => {
+            handleAddProfile(name, path, coverUrl, exePath);
+          }}
+        />
+      )}
     </>
   );
 };
@@ -497,7 +513,7 @@ export const GameProfilesView: React.FC<GameProfilesViewProps> = ({
 // Subpage component for editing Profile in details
 interface EditProfileViewProps {
   profile: Profile;
-  onSave: (id: string, name: string, path: string, enabled: boolean, coverUrl?: string | null) => void;
+  onSave: (id: string, name: string, path: string, enabled: boolean, coverUrl?: string | null, exePath?: string | null) => void;
   onCancel: () => void;
   onBrowseDir: (setter: (val: string) => void) => void;
 }
@@ -512,12 +528,24 @@ function EditProfileView({ profile, onSave, onCancel, onBrowseDir }: EditProfile
   const [name, setName] = useState(profile.name);
   const [path, setPath] = useState(profile.source_path);
   const [coverUrl, setCoverUrl] = useState<string | null>(profile.cover_url || null);
+  const [exePath, setExePath] = useState(profile.exe_path || "");
   
   // Separate search state
   const [searchTerm, setSearchTerm] = useState(profile.name);
   const [searchResults, setSearchResults] = useState<CoverSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  const handleBrowseExe = async () => {
+    try {
+      const selected: string | null = await invoke("select_file");
+      if (selected) {
+        setExePath(selected);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const handleSearchCovers = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -590,6 +618,24 @@ function EditProfileView({ profile, onSave, onCancel, onBrowseDir }: EditProfile
             </div>
           </div>
 
+          <div className="form-group">
+            <label className="form-label">LINK GAME EXECUTABLE (LAUNCH & AUTO-BACKUP)</label>
+            <div className="form-input-row">
+              <input
+                className="form-input"
+                value={exePath}
+                onChange={(e) => setExePath(e.target.value)}
+                placeholder="Optional link to game executable (e.g. eldenring.exe)..."
+              />
+              <button className="btn btn-outline" type="button" onClick={handleBrowseExe}>
+                <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.637 10.637z" />
+                </svg>
+                BROWSE EXE
+              </button>
+            </div>
+          </div>
+
           {/* Large cover art background preview inside the edit card */}
           <div className="form-group">
             <label className="form-label">ACTIVE COVER BACKDROP PREVIEW</label>
@@ -626,7 +672,7 @@ function EditProfileView({ profile, onSave, onCancel, onBrowseDir }: EditProfile
             <button
               className="btn btn-primary"
               style={{ flexGrow: 1 }}
-              onClick={() => onSave(profile.id, name, path, profile.enabled, coverUrl)}
+              onClick={() => onSave(profile.id, name, path, profile.enabled, coverUrl, exePath || null)}
               disabled={!name.trim() || !path.trim()}
             >
               <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
@@ -731,3 +777,181 @@ function EditProfileView({ profile, onSave, onCancel, onBrowseDir }: EditProfile
     </>
   );
 }
+
+interface SteamLibraryScannerProps {
+  config: Config;
+  onClose: () => void;
+  onImport: (name: string, path: string, coverUrl: string | null, exePath: string | null) => void;
+}
+
+interface DetectedGame {
+  name: string;
+  exe_path: string;
+  save_path_suggestion: string | null;
+}
+
+const SteamLibraryScanner: React.FC<SteamLibraryScannerProps> = ({ config, onClose, onImport }) => {
+  const [games, setGames] = useState<DetectedGame[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [customPaths, setCustomPaths] = useState<Record<string, string>>({});
+
+  const scanLibrary = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const list: DetectedGame[] = await invoke("scan_steam_library");
+      setGames(list);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    scanLibrary();
+  }, []);
+
+  const handleBrowseDirForGame = async (gameName: string) => {
+    try {
+      const selected: string | null = await invoke("select_directory");
+      if (selected) {
+        setCustomPaths(prev => ({ ...prev, [gameName]: selected }));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleImport = (game: DetectedGame) => {
+    const savePath = customPaths[game.name] || game.save_path_suggestion;
+    if (!savePath) return;
+    onImport(game.name, savePath, null, game.exe_path);
+  };
+
+  const filteredGames = games.filter(g => 
+    g.name.toLowerCase().includes(filter.toLowerCase())
+  );
+
+  return (
+    <div className="modal-overlay" style={{ zIndex: 1000 }}>
+      <div className="modal-container tech-card" style={{ width: "90%", maxWidth: "800px", display: "flex", flexDirection: "column", maxHeight: "85vh", margin: "auto" }}>
+        <header className="tech-card-header" style={{ marginBottom: "16px", paddingBottom: "12px" }}>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="tech-card-title" style={{ fontSize: "15px", display: "flex", alignItems: "center", gap: "8px" }}>
+              <svg width="18" height="18" fill="currentColor" viewBox="0 0 16 16" style={{ color: "var(--color-cyan)" }}>
+                <path d="M14.285 4.887A8.04 8.04 0 0 0 16 0H0v16h8.868a8.04 8.04 0 0 0 5.417-3.113l-3.32-3.32a3.85 3.85 0 0 1-2.965.867 3.858 3.858 0 0 1-3.218-3.218 3.858 3.858 0 0 1 .867-2.965l3.32-3.32a3.85 3.85 0 0 1 2.965-.867 3.858 3.858 0 0 1 3.218 3.218 3.858 3.858 0 0 1-.867 2.965l3.32 3.32ZM7.785 8a.215.215 0 1 1-.43 0 .215.215 0 0 1 .43 0ZM13 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-4 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/>
+              </svg>
+              STEAM LIBRARY GAME SCANNER
+            </span>
+            <span style={{ fontSize: "11px", color: "var(--color-gray)", marginTop: "2px" }}>
+              Heuristically auto-detects save folders for installed games in your Steam library directories.
+            </span>
+          </div>
+          <button className="btn btn-danger" style={{ height: "26px", fontSize: "10px", padding: "0 10px" }} onClick={onClose}>
+            CLOSE SCANNER
+          </button>
+        </header>
+
+        {loading ? (
+          <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "240px", gap: "12px", color: "var(--color-gray)" }}>
+            <div className="loader-spinner" style={{ width: "24px", height: "24px" }}></div>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "12px" }}>SCANNING SYSTEM LIBRARY...</span>
+          </div>
+        ) : error ? (
+          <div className="detection-banner detection-banner-error" style={{ margin: "20px 0" }}>
+            <span>Scan failed: {error}</span>
+          </div>
+        ) : (
+          <>
+            <div className="form-group" style={{ marginBottom: "16px" }}>
+              <input
+                className="form-input"
+                placeholder="Filter detected games by name..."
+                value={filter}
+                onChange={e => setFilter(e.target.value)}
+              />
+            </div>
+
+            <div style={{ overflowY: "auto", flexGrow: 1, display: "flex", flexDirection: "column", gap: "10px", paddingRight: "4px", minHeight: "200px" }}>
+              {filteredGames.length === 0 ? (
+                <div style={{ padding: "40px 10px", textAlign: "center", color: "var(--color-gray)", fontStyle: "italic" }}>
+                  No games found matching search filters.
+                </div>
+              ) : (
+                filteredGames.map(game => {
+                  const isTracked = config.profiles.some(p => 
+                    p.exe_path === game.exe_path || p.name.toLowerCase() === game.name.toLowerCase()
+                  );
+                  const selectedPath = customPaths[game.name] || game.save_path_suggestion;
+
+                  return (
+                    <div 
+                      key={game.name}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        background: "rgba(22, 31, 32, 0.4)",
+                        border: "1px solid var(--border-color-tech)",
+                        borderRadius: "var(--radius-inner)",
+                        padding: "12px 16px",
+                        gap: "8px",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px", overflow: "hidden" }}>
+                          <span style={{ fontSize: "13px", fontWeight: "700", color: "var(--color-white)" }}>{game.name}</span>
+                          <span style={{ fontSize: "10px", color: "var(--color-gray)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={game.exe_path}>
+                            EXE: {game.exe_path}
+                          </span>
+                        </div>
+
+                        {isTracked ? (
+                          <span className="badge badge-active" style={{ fontSize: "9px" }}>ALREADY TRACKED</span>
+                        ) : (
+                          <button
+                            className="btn btn-primary"
+                            style={{ height: "28px", padding: "0 14px", fontSize: "10px", flexShrink: 0 }}
+                            disabled={!selectedPath}
+                            onClick={() => handleImport(game)}
+                          >
+                            IMPORT GAME
+                          </button>
+                        )}
+                      </div>
+
+                      {!isTracked && (
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
+                          <div style={{ flexGrow: 1, display: "flex", flexDirection: "column", gap: "2px" }}>
+                            <span style={{ fontSize: "9px", color: "var(--color-gray)" }}>TARGET SAVE PATH</span>
+                            <div className="profile-card-path-container" style={{ border: "1px solid rgba(70, 94, 96, 0.2)", borderRadius: "var(--radius-inner)", padding: "4px 8px", background: "var(--bg-color-inner)" }}>
+                              {selectedPath ? (
+                                <span className="profile-card-path" style={{ fontSize: "11px", color: "var(--color-cyan)" }} title={selectedPath}>{selectedPath}</span>
+                              ) : (
+                                <span className="profile-card-path" style={{ fontSize: "11px", color: "var(--color-crimson)", fontStyle: "italic" }}>Could not detect save directory automatically.</span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            style={{ height: "28px", padding: "0 10px", fontSize: "9px", alignSelf: "flex-end" }}
+                            onClick={() => handleBrowseDirForGame(game.name)}
+                          >
+                            BROWSE
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};

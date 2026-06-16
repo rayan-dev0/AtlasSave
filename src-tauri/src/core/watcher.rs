@@ -91,6 +91,29 @@ impl SaveWatcher {
         }
     }
 
+    pub fn stop_watching_profile(&mut self, profile_id: &str) {
+        if let Some(ref mut watcher) = self.watcher {
+            let mut watches = self.active_watches.lock().unwrap();
+            if let Some(path_str) = watches.remove(profile_id) {
+                let path = Path::new(&path_str);
+                let _ = watcher.unwatch(path);
+                println!("SaveWatcher: Temporarily paused monitoring for profile {}", profile_id);
+            }
+        }
+    }
+
+    pub fn start_watching_profile(&mut self, profile: &Profile) {
+        if let Some(ref mut watcher) = self.watcher {
+            let path = Path::new(&profile.source_path);
+            if path.exists() {
+                if let Ok(_) = watcher.watch(path, RecursiveMode::Recursive) {
+                    self.active_watches.lock().unwrap().insert(profile.id.clone(), profile.source_path.clone());
+                    println!("SaveWatcher: Resumed monitoring for profile {}", profile.id);
+                }
+            }
+        }
+    }
+
     pub fn stop(&mut self) {
         if let Some(mut watcher) = self.watcher.take() {
             let watches = self.active_watches.lock().unwrap();

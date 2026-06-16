@@ -37,6 +37,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   
   const [backingUpCurrent, setBackingUpCurrent] = useState(false);
 
+  const [storageStats, setStorageStats] = useState<{
+    total_size_bytes: number;
+    backup_count: number;
+    oldest_backup_time: string;
+    newest_backup_time: string;
+  } | null>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [pruning, setPruning] = useState(false);
+  const [pruneCount, setPruneCount] = useState(config.global.max_backups);
+
+  useEffect(() => {
+    setPruneCount(config.global.max_backups);
+  }, [config.global.max_backups]);
+
   // Sync selected tab if profiles list changes or current selection is removed
   useEffect(() => {
     if (config.profiles.length > 0) {
@@ -63,13 +77,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
+  const loadStorageStats = async (profileId: string) => {
+    setLoadingStats(true);
+    try {
+      const stats = await invoke("get_profile_storage_stats", { profileId });
+      setStorageStats(stats as any);
+    } catch (err) {
+      console.error("Failed to load storage stats:", err);
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
   useEffect(() => {
     if (selectedProfileId) {
       loadBackups(selectedProfileId);
+      loadStorageStats(selectedProfileId);
       setConfirmRestoreFile(null);
       setConfirmDeleteFile(null);
     } else {
       setBackups([]);
+      setStorageStats(null);
     }
   }, [selectedProfileId]);
 
@@ -77,6 +105,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const handleRefresh = () => {
       if (selectedProfileId) {
         loadBackups(selectedProfileId);
+        loadStorageStats(selectedProfileId);
       }
     };
     window.addEventListener("refresh-backups", handleRefresh);
@@ -119,6 +148,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       setConfirmDeleteFile(null);
     } catch (err) {
       alert(`Delete request failed: ${err}`);
+    }
+  };
+
+  const handlePruneBackups = async (profileId: string) => {
+    setPruning(true);
+    try {
+      await invoke("prune_profile_backups", { profileId, keepCount: pruneCount });
+      // The event listener will auto-refresh backups & stats
+    } catch (err) {
+      alert(`Pruning failed: ${err}`);
+    } finally {
+      setPruning(false);
+    }
+  };
+
+  const handleLaunchGame = async (profileId: string, exePath: string) => {
+    try {
+      await invoke("launch_game", { profileId, exePath });
+    } catch (err) {
+      alert(`Failed to launch game: ${err}`);
     }
   };
 
@@ -266,9 +315,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <div className="game-detail-content">
                           <div className="game-detail-header">
                             <h2 className="game-title">{selectedProfile.name}</h2>
-                            <span className={`badge ${selectedProfile.enabled && monitoringActive ? "badge-active" : "badge-paused"}`}>
-                              {selectedProfile.enabled && monitoringActive ? "Watching" : "Offline"}
-                            </span>
+                            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                              <span className={`badge ${selectedProfile.enabled && monitoringActive ? "badge-active" : "badge-paused"}`}>
+                                {selectedProfile.enabled && monitoringActive ? "Watching" : "Offline"}
+                              </span>
+                              {selectedProfile.exe_path ? (
+                                <button
+                                  className="btn btn-primary"
+                                  style={{ height: "28px", fontSize: "11px", padding: "0 12px", background: "var(--color-green)", color: "#032021", boxShadow: "0 0 10px rgba(89, 248, 180, 0.3)" }}
+                                  onClick={() => handleLaunchGame(selectedProfile.id, selectedProfile.exe_path!)}
+                                >
+                                  <svg style={{ width: 12, height: 12 }} fill="currentColor" viewBox="0 0 16 16">
+                                    <path d="M11.596 8.697l-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393z"/>
+                                  </svg>
+                                  LAUNCH GAME
+                                </button>
+                              ) : (
+                                <span style={{ fontSize: "10px", color: "var(--color-gray)", opacity: 0.6, fontStyle: "italic" }}>
+                                  No Executable Linked
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <div className="game-detail-info-group">
@@ -284,6 +351,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </div>
                     );
                   })()}
+
+                  {/* Profile Storage Diagnostics Panel */}
+                  <div className="tech-card" style={{ flexGrow: 0, margin: 0, padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
+                    <span className="tech-card-title" style={{ fontSize: "11px" }}>PROFILE STORAGE DIAGNOSTICS</span>
+                    {loadingStats ? (
+                      <span style={{ fontSize: "11px", color: "var(--color-gray)" }}>Loading stats...</span>
+                    ) : storageStats ? (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                          <span style={{ fontSize: "10px", color: "var(--color-gray)" }}>ARCHIVES COUNTER</span>
+                          <span style={{ fontWeight: "600", fontSize: "12px", color: "var(--color-white)" }}>{storageStats.backup_count} files</span>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                          <span style={{ fontSize: "10px", color: "var(--color-gray)" }}>TOTAL SIZE ON DISK</span>
+                          <span style={{ fontWeight: "600", fontSize: "12px", color: "var(--color-cyan)" }}>{formatBytes(storageStats.total_size_bytes)}</span>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px", overflow: "hidden" }}>
+                          <span style={{ fontSize: "10px", color: "var(--color-gray)" }}>OLDEST BACKUP</span>
+                          <span style={{ fontWeight: "600", fontSize: "11px", color: "var(--color-white)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={storageStats.oldest_backup_time}>{storageStats.oldest_backup_time}</span>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px", overflow: "hidden" }}>
+                          <span style={{ fontSize: "10px", color: "var(--color-gray)" }}>LATEST BACKUP</span>
+                          <span style={{ fontWeight: "600", fontSize: "11px", color: "var(--color-white)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={storageStats.newest_backup_time}>{storageStats.newest_backup_time}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: "11px", color: "var(--color-gray)", fontStyle: "italic" }}>No diagnostics available.</span>
+                    )}
+                  </div>
 
                   {/* Save Archives & Backups Management list */}
                   <div className="tech-card" style={{ flexGrow: 1, margin: 0, padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -440,6 +536,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             </div>
                           </div>
                         ))}
+                      </div>
+                    )}
+
+                    {/* Pruning tool row */}
+                    {backups.length > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderTop: "1px solid rgba(70, 94, 96, 0.2)", paddingTop: "12px", gap: "12px", marginTop: "12px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                          <span style={{ fontSize: "10px", color: "var(--color-gray)", fontWeight: "700" }}>ROTATION CLEANUP</span>
+                          <span style={{ fontSize: "11px", color: "var(--color-gray)" }}>Manually reduce backups to save space</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{ fontSize: "11px", color: "var(--color-white)" }}>Keep latest:</span>
+                          <input 
+                            type="number" 
+                            min="1" 
+                            max="100" 
+                            className="form-input" 
+                            style={{ width: "65px", height: "28px", padding: "0 8px", textAlign: "center", minHeight: "auto" }}
+                            value={pruneCount}
+                            onChange={(e) => setPruneCount(parseInt(e.target.value) || 10)}
+                          />
+                          <button 
+                            className="btn btn-outline" 
+                            style={{ height: "28px", fontSize: "10px", padding: "0 12px", color: "var(--color-yellow)", borderColor: "rgba(255, 208, 125, 0.3)" }}
+                            onClick={() => handlePruneBackups(selectedProfile.id)}
+                            disabled={pruning}
+                          >
+                            {pruning ? "PRUNING..." : "PRUNE"}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
