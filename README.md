@@ -1,8 +1,22 @@
 # 🛡️ AtlasSave
 
+[![Release Status](https://img.shields.io/github/v/release/rayan-dev0/AtlasSave?color=00f2fe&label=Version&style=flat-square)](https://github.com/rayan-dev0/AtlasSave/releases)
+[![Stars Counter](https://img.shields.io/github/stars/rayan-dev0/AtlasSave?style=flat-square&color=ffb703&label=Stars)](https://github.com/rayan-dev0/AtlasSave/stargazers)
+[![License](https://img.shields.io/github/license/rayan-dev0/AtlasSave?color=ff0055&style=flat-square)](https://github.com/rayan-dev0/AtlasSave/blob/main/LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows-0078d7?style=flat-square&logo=windows)](https://github.com/rayan-dev0)
+[![Tauri v2](https://img.shields.io/badge/Tauri-v2-FFC107?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app)
+[![React v19](https://img.shields.io/badge/React-v19-61dafb?style=flat-square&logo=react&logoColor=white)](https://react.dev)
+[![Rust 2024](https://img.shields.io/badge/Rust-2024-000000?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
+
 AtlasSave is a premium, automated, and lightweight desktop save game manager and synchronization tool built with **Tauri v2**, **React**, **TypeScript**, and **Rust**. 
 
 It watches your game save directories in real-time, compresses them into timestamped ZIP files, manages local restore points safely, and replicates backups to external folders (NAS) and private Git repositories (like GitHub) for seamless cloud syncing.
+
+---
+
+## 📸 Application Preview
+
+![AtlasSave Premium Dashboard Mockup](src/assets/dashboard_preview.png)
 
 ---
 
