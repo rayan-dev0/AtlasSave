@@ -93,6 +93,7 @@ jobs:
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || steps.check_tag.outputs.tag_exists == 'false'
         shell: pwsh
         run: |
+          Copy-Item src-tauri/target/release/tauri-app.exe src-tauri/target/release/AtlasSave.exe
           Compress-Archive -Path src-tauri/target/release/AtlasSave.exe -DestinationPath src-tauri/target/release/AtlasSave-portable-windows-x64.zip
 
       - name: Upload portable zip to GitHub Release
