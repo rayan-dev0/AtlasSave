@@ -741,13 +741,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                         {isFirst && (
                                           <span className="text-green text-[9.5px] font-bold">
                                             [Current]
-
-
-
-
-
-
-                                            
                                           </span>
                                         )}
                                       </div>

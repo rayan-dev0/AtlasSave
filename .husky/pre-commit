@@ -13,7 +13,6 @@ echo "🔥 [Engine] Running inspection..."
 if ! npm run format:check; then
   echo ""
   echo "🥩 \"IT'S FUCKING RAW! The code formatting is absolutely raw!\""
-  echo "🐕 Much unformatted. Very chaos. Such messy. Wow."
   echo "💡 Run 'npm run format' to cook it properly."
   echo "🔴 Commit rejected."
   exit 1
