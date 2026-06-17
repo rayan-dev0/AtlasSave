@@ -1577,3 +1577,71 @@ input[type="range"]::-webkit-slider-thumb:hover {
     transform: translateY(0) scale(1);
   }
 }
+
+/* ==========================================
+   SAVE TIMELINE TREE STYLES
+   ========================================== */
+
+.timeline-tree-container {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color-tech) transparent;
+}
+
+.timeline-row {
+  transition: all 0.25s ease;
+}
+
+.timeline-row:hover {
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.timeline-card {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.timeline-card:hover {
+  transform: translateX(2px);
+}
+
+.timeline-card-auto:hover {
+  border-color: var(--color-cyan) !important;
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.15) !important;
+}
+
+.timeline-card-checkpoint:hover {
+  border-color: var(--color-green) !important;
+  box-shadow: 0 0 10px rgba(89, 248, 180, 0.15) !important;
+}
+
+.timeline-card-rollback:hover {
+  border-color: var(--color-crimson) !important;
+  box-shadow: 0 0 10px rgba(255, 107, 107, 0.15) !important;
+}
+
+/* Glow effects for SVG elements */
+.glow-auto {
+  filter: drop-shadow(0 0 4px var(--color-cyan));
+}
+
+.glow-checkpoint {
+  filter: drop-shadow(0 0 4px var(--color-green));
+}
+
+.glow-rollback {
+  filter: drop-shadow(0 0 4px var(--color-crimson));
+}
+
+/* Confirm states style overrides */
+.timeline-card.confirm-restore {
+  border-color: var(--color-yellow) !important;
+  box-shadow: 0 0 12px rgba(255, 208, 125, 0.15) !important;
+}
+
+.timeline-card.confirm-delete {
+  border-color: var(--color-crimson) !important;
+  box-shadow: 0 0 12px rgba(255, 107, 107, 0.15) !important;
+}
+
+
+
+

@@ -13,6 +13,47 @@ interface DashboardViewProps {
   handleTriggerGitSync: () => void;
 }
 
+const parseBackupFilename = (filename: string, profileName: string) => {
+  const nameWithoutExt = filename.replace(/\.zip$/i, "");
+  
+  // Suffix format is _YYYYMMDD_HHMMSS
+  const timestampRegex = /_(\d{8})_(\d{6})$/;
+  const match = nameWithoutExt.match(timestampRegex);
+  
+  let labelPrefix = nameWithoutExt;
+  if (match) {
+    labelPrefix = nameWithoutExt.substring(0, match.index);
+  }
+  
+  // Clean profile name to compare
+  const sanitizeForCompare = (str: string) =>
+    str
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "")
+      .trim();
+
+  const cleanLabel = labelPrefix.replace(/_/g, " ").trim();
+  const lowerPrefix = labelPrefix.toLowerCase();
+  
+  let type: "auto" | "checkpoint" | "rollback" = "auto";
+  let label = cleanLabel;
+
+  if (lowerPrefix.includes("rollback")) {
+    type = "rollback";
+    label = "Rollback Branch";
+  } else if (lowerPrefix.endsWith("_manual")) {
+    type = "checkpoint";
+    label = cleanLabel.replace(/\s+manual$/i, "").trim() + " Checkpoint";
+  } else if (sanitizeForCompare(labelPrefix) !== sanitizeForCompare(profileName)) {
+    type = "checkpoint"; // Renamed files
+  } else {
+    type = "auto";
+    label = "System Auto-Save";
+  }
+
+  return { label, type };
+};
+
 export const DashboardView: React.FC<DashboardViewProps> = ({
   config,
   monitoringActive,
@@ -27,6 +68,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(
     config.profiles.length > 0 ? config.profiles[0].id : null
   );
+
+  const [viewMode, setViewMode] = useState<'list' | 'tree'>('tree');
+  const [renamingFile, setRenamingFile] = useState<string | null>(null);
+  const [newLabel, setNewLabel] = useState<string>("");
 
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [loadingBackups, setLoadingBackups] = useState(false);
@@ -148,6 +193,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       setConfirmDeleteFile(null);
     } catch (err) {
       alert(`Delete request failed: ${err}`);
+    }
+  };
+
+  const handleRenameBackup = async (profileId: string, filename: string, label: string) => {
+    if (!label.trim()) return;
+    try {
+      await invoke("rename_backup", { profileId, filename, newLabel: label });
+      setRenamingFile(null);
+      setNewLabel("");
+    } catch (err) {
+      alert(`Rename request failed: ${err}`);
     }
   };
 
@@ -384,7 +440,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   {/* Save Archives & Backups Management list */}
                   <div className="tech-card" style={{ flexGrow: 1, margin: 0, padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
                     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(70, 94, 96, 0.2)", paddingBottom: "10px" }}>
-                      <span className="tech-card-title">SAVE FILE ARCHIVES & HISTORY</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                        <span className="tech-card-title">SAVE FILE ARCHIVES</span>
+                        <div style={{ display: "flex", background: "var(--bg-color-inner)", border: "1px solid var(--border-color-tech)", borderRadius: "4px", padding: "2px" }}>
+                          <button
+                            className="btn"
+                            style={{
+                              height: "22px",
+                              fontSize: "9px",
+                              padding: "0 8px",
+                              border: "none",
+                              background: viewMode === "tree" ? "var(--color-cyan)" : "transparent",
+                              color: viewMode === "tree" ? "#032021" : "var(--color-gray)",
+                              cursor: "pointer"
+                            }}
+                            onClick={() => { setViewMode("tree"); setRenamingFile(null); }}
+                          >
+                            TIMELINE TREE
+                          </button>
+                          <button
+                            className="btn"
+                            style={{
+                              height: "22px",
+                              fontSize: "9px",
+                              padding: "0 8px",
+                              border: "none",
+                              background: viewMode === "list" ? "var(--color-cyan)" : "transparent",
+                              color: viewMode === "list" ? "#032021" : "var(--color-gray)",
+                              cursor: "pointer"
+                            }}
+                            onClick={() => { setViewMode("list"); setRenamingFile(null); }}
+                          >
+                            LIST VIEW
+                          </button>
+                        </div>
+                      </div>
                       <div style={{ display: "flex", gap: "10px" }}>
                         <button 
                           className="btn btn-outline" 
@@ -432,110 +522,435 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <div style={{ padding: "40px 10px", textAlign: "center", color: "var(--color-gray)", fontSize: "11.5px", fontFamily: "var(--font-mono)", opacity: 0.6 }}>
                         No local save archives captured yet for this profile.
                       </div>
-                    ) : (
-                      <div style={{ maxHeight: "200px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px", paddingRight: "4px" }}>
-                        {backups.map((backup) => (
-                          <div 
-                            key={backup.filename}
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
-                              background: "var(--bg-color-inner)",
-                              border: "1px solid var(--border-color-tech)",
-                              borderRadius: "var(--radius-inner)",
-                              padding: "10px 14px",
-                              gap: "12px",
-                              transition: "border-color 0.2s ease"
-                            }}
-                            className="backup-row"
-                          >
-                            <div style={{ display: "flex", alignItems: "center", gap: "12px", width: "50%", minWidth: "150px" }}>
-                              <svg style={{ width: 16, height: 16, color: "var(--color-purple)", flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12l-3-3m0 0l-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                              </svg>
-                              <div style={{ display: "flex", flexDirection: "column", gap: "2px", overflow: "hidden" }}>
-                                <span 
-                                  style={{ fontSize: "11.5px", fontWeight: "600", color: "var(--color-white)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                                  title={backup.filename}
+                    ) : viewMode === "tree" ? (
+                      <div style={{ maxHeight: "380px", overflowY: "auto", display: "flex", flexDirection: "column", paddingRight: "4px" }} className="timeline-tree-container">
+                        {backups.map((backup, index) => {
+                          const { label, type } = parseBackupFilename(backup.filename, selectedProfile.name);
+                          const isFirst = index === 0;
+                          const isLast = index === backups.length - 1;
+
+                          const mainX = 30;
+                          const nodeY = 32;
+                          const branchX = 55;
+
+                          return (
+                            <div key={backup.filename} className="timeline-row" style={{ display: "flex", position: "relative", minHeight: "68px" }}>
+                              {/* SVG Column */}
+                              <div style={{ width: "80px", position: "relative", flexShrink: 0 }}>
+                                <svg width="80" height="100%" style={{ position: "absolute", top: 0, left: 0, overflow: "visible" }}>
+                                  {/* Main timeline track line */}
+                                  <line
+                                    x1={mainX}
+                                    y1={isFirst ? nodeY : 0}
+                                    x2={mainX}
+                                    y2={isLast ? nodeY : "100%"}
+                                    stroke="rgba(70, 94, 96, 0.3)"
+                                    strokeWidth="2"
+                                  />
+
+                                  {/* Branch curve for rollback */}
+                                  {type === "rollback" && (
+                                    <path
+                                      d={`M ${mainX} ${isFirst ? nodeY : 12} Q ${mainX} ${nodeY} ${branchX} ${nodeY}`}
+                                      fill="none"
+                                      stroke="var(--color-crimson)"
+                                      strokeWidth="2"
+                                      strokeDasharray="4 2"
+                                    />
+                                  )}
+
+                                  {/* Node Icon */}
+                                  {type === "auto" && (
+                                    <circle
+                                      cx={mainX}
+                                      cy={nodeY}
+                                      r="6"
+                                      fill="#030606"
+                                      stroke="var(--color-cyan)"
+                                      strokeWidth="3"
+                                      style={{ filter: "drop-shadow(0 0 4px var(--color-cyan))" }}
+                                    />
+                                  )}
+                                  {type === "checkpoint" && (
+                                    <polygon
+                                      points={`${mainX},${nodeY - 7} ${mainX + 7},${nodeY} ${mainX},${nodeY + 7} ${mainX - 7},${nodeY}`}
+                                      fill="#030606"
+                                      stroke="var(--color-green)"
+                                      strokeWidth="3"
+                                      style={{ filter: "drop-shadow(0 0 4px var(--color-green))" }}
+                                    />
+                                  )}
+                                  {type === "rollback" && (
+                                    <circle
+                                      cx={branchX}
+                                      cy={nodeY}
+                                      r="6"
+                                      fill="#030606"
+                                      stroke="var(--color-crimson)"
+                                      strokeWidth="3"
+                                      style={{ filter: "drop-shadow(0 0 4px var(--color-crimson))" }}
+                                    />
+                                  )}
+                                </svg>
+                              </div>
+
+                              {/* Node Info Card Column */}
+                              <div style={{
+                                flexGrow: 1,
+                                display: "flex",
+                                alignItems: "center",
+                                paddingLeft: type === "rollback" ? "10px" : "0px",
+                                paddingBottom: "10px"
+                              }}>
+                                <div 
+                                  className={`timeline-card timeline-card-${type} ${confirmRestoreFile === backup.filename ? 'confirm-restore' : ''} ${confirmDeleteFile === backup.filename ? 'confirm-delete' : ''}`}
+                                  style={{
+                                    width: "100%",
+                                    background: "var(--bg-color-inner)",
+                                    border: `1px solid ${type === "checkpoint" ? "rgba(89, 248, 180, 0.3)" : type === "rollback" ? "rgba(255, 107, 107, 0.3)" : "var(--border-color-tech)"}`,
+                                    borderRadius: "var(--radius-inner)",
+                                    padding: "10px 14px",
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                    gap: "12px",
+                                    boxShadow: type === "checkpoint" ? "0 0 8px rgba(89, 248, 180, 0.05)" : type === "rollback" ? "0 0 8px rgba(255, 107, 107, 0.05)" : "none"
+                                  }}
                                 >
-                                  {backup.filename}
-                                </span>
-                                <span style={{ fontSize: "9.5px", color: "var(--color-gray)", fontFamily: "var(--font-mono)" }}>
-                                  {backup.created_at}
-                                </span>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: "2px", overflow: "hidden", flexGrow: 1 }}>
+                                    {renamingFile === backup.filename ? (
+                                      <div style={{ display: "flex", gap: "8px", alignItems: "center", width: "100%" }}>
+                                        <input
+                                          type="text"
+                                          className="form-input"
+                                          value={newLabel}
+                                          onChange={(e) => setNewLabel(e.target.value)}
+                                          style={{ height: "26px", fontSize: "11px", padding: "0 8px", minHeight: "auto", flexGrow: 1 }}
+                                          autoFocus
+                                          placeholder="New Label"
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") {
+                                              handleRenameBackup(selectedProfile.id, backup.filename, newLabel);
+                                            } else if (e.key === "Escape") {
+                                              setRenamingFile(null);
+                                            }
+                                          }}
+                                        />
+                                        <button
+                                          className="btn btn-primary"
+                                          style={{ height: "26px", fontSize: "10px", padding: "0 10px", background: "var(--color-green)", color: "#032021" }}
+                                          onClick={() => handleRenameBackup(selectedProfile.id, backup.filename, newLabel)}
+                                        >
+                                          SAVE
+                                        </button>
+                                        <button
+                                          className="btn btn-outline"
+                                          style={{ height: "26px", fontSize: "10px", padding: "0 10px" }}
+                                          onClick={() => setRenamingFile(null)}
+                                        >
+                                          CANCEL
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                          <span 
+                                            style={{
+                                              fontSize: "11.5px",
+                                              fontWeight: "600",
+                                              color: type === "checkpoint" ? "var(--color-green)" : type === "rollback" ? "var(--color-crimson)" : "var(--color-white)",
+                                              whiteSpace: "nowrap",
+                                              overflow: "hidden",
+                                              textOverflow: "ellipsis"
+                                            }}
+                                            title={backup.filename}
+                                          >
+                                            {label}
+                                          </span>
+                                          {type === "checkpoint" && (
+                                            <span style={{ fontSize: "8px", background: "rgba(89, 248, 180, 0.1)", color: "var(--color-green)", border: "1px solid rgba(89, 248, 180, 0.2)", borderRadius: "3px", padding: "1px 4px", fontWeight: "bold" }}>
+                                              CHECKPOINT
+                                            </span>
+                                          )}
+                                          {type === "rollback" && (
+                                            <span style={{ fontSize: "8px", background: "rgba(255, 107, 107, 0.1)", color: "var(--color-crimson)", border: "1px solid rgba(255, 107, 107, 0.2)", borderRadius: "3px", padding: "1px 4px", fontWeight: "bold" }}>
+                                              ROLLBACK
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                                          <span style={{ fontSize: "9.5px", color: "var(--color-gray)", fontFamily: "var(--font-mono)" }}>
+                                            {backup.created_at}
+                                          </span>
+                                          <span style={{ fontSize: "9.5px", color: "rgba(70, 94, 96, 0.3)", fontFamily: "var(--font-mono)" }}>|</span>
+                                          <span style={{ fontSize: "9.5px", color: "var(--color-cyan)", fontFamily: "var(--font-mono)" }}>
+                                            {formatBytes(backup.size_bytes)}
+                                          </span>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+
+                                  {/* Actions Column */}
+                                  <div style={{ display: "flex", gap: "6px", alignItems: "center", flexShrink: 0 }}>
+                                    {confirmRestoreFile === backup.filename ? (
+                                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                        <span style={{ fontSize: "9px", color: "var(--color-yellow)", fontWeight: "bold" }}>OVERWRITE ACTIVE SAVE?</span>
+                                        <button 
+                                          className="btn btn-primary" 
+                                          style={{ height: "22px", padding: "0 8px", fontSize: "9px", background: "var(--color-green)", color: "#032021" }}
+                                          onClick={() => handleRestore(selectedProfile.id, backup.filename)}
+                                        >
+                                          YES
+                                        </button>
+                                        <button 
+                                          className="btn btn-outline" 
+                                          style={{ height: "22px", padding: "0 8px", fontSize: "9px" }}
+                                          onClick={() => setConfirmRestoreFile(null)}
+                                        >
+                                          NO
+                                        </button>
+                                      </div>
+                                    ) : confirmDeleteFile === backup.filename ? (
+                                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                        <span style={{ fontSize: "9px", color: "var(--color-crimson)", fontWeight: "bold" }}>DELETE FILE?</span>
+                                        <button 
+                                          className="btn btn-primary" 
+                                          style={{ height: "22px", padding: "0 8px", fontSize: "9px", background: "var(--color-crimson)", color: "white" }}
+                                          onClick={() => handleDelete(selectedProfile.id, backup.filename)}
+                                        >
+                                          YES
+                                        </button>
+                                        <button 
+                                          className="btn btn-outline" 
+                                          style={{ height: "22px", padding: "0 8px", fontSize: "9px" }}
+                                          onClick={() => setConfirmDeleteFile(null)}
+                                        >
+                                          NO
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      !renamingFile && (
+                                        <>
+                                          <button 
+                                            className="btn btn-outline" 
+                                            style={{ height: "24px", padding: "0 10px", fontSize: "9px", color: "var(--color-green)", borderColor: "rgba(89, 248, 180, 0.3)" }}
+                                            onClick={() => {
+                                              setConfirmRestoreFile(backup.filename);
+                                              setConfirmDeleteFile(null);
+                                            }}
+                                          >
+                                            RESTORE
+                                          </button>
+                                          <button 
+                                            className="btn btn-outline" 
+                                            style={{ height: "24px", padding: "0 10px", fontSize: "9px", color: "var(--color-gray)" }}
+                                            onClick={() => {
+                                              setRenamingFile(backup.filename);
+                                              setNewLabel(label === "System Auto-Save" || label.endsWith(" Checkpoint") ? "" : label);
+                                              setConfirmRestoreFile(null);
+                                              setConfirmDeleteFile(null);
+                                            }}
+                                          >
+                                            RENAME
+                                          </button>
+                                          <button 
+                                            className="btn btn-danger" 
+                                            style={{ height: "24px", padding: "0 10px", fontSize: "9px" }}
+                                            onClick={() => {
+                                              setConfirmDeleteFile(backup.filename);
+                                              setConfirmRestoreFile(null);
+                                            }}
+                                          >
+                                            DELETE
+                                          </button>
+                                        </>
+                                      )
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                             </div>
-
-                            <span style={{ fontSize: "11px", fontFamily: "var(--font-mono)", color: "var(--color-cyan)" }}>
-                              {formatBytes(backup.size_bytes)}
-                            </span>
-
-                            {/* Actions Column */}
-                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                              {confirmRestoreFile === backup.filename ? (
-                                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                                  <span style={{ fontSize: "9px", color: "var(--color-yellow)", fontWeight: "bold" }}>OVERWRITE ACTIVE SAVE?</span>
-                                  <button 
-                                    className="btn btn-primary" 
-                                    style={{ height: "22px", padding: "0 8px", fontSize: "9px", background: "var(--color-green)", color: "#032021" }}
-                                    onClick={() => handleRestore(selectedProfile.id, backup.filename)}
-                                  >
-                                    YES
-                                  </button>
-                                  <button 
-                                    className="btn btn-outline" 
-                                    style={{ height: "22px", padding: "0 8px", fontSize: "9px" }}
-                                    onClick={() => setConfirmRestoreFile(null)}
-                                  >
-                                    NO
-                                  </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ maxHeight: "380px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px", paddingRight: "4px" }} className="backup-list-container">
+                        {backups.map((backup) => {
+                          const { label, type } = parseBackupFilename(backup.filename, selectedProfile.name);
+                          return (
+                            <div 
+                              key={backup.filename}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                background: "var(--bg-color-inner)",
+                                border: `1px solid ${type === "checkpoint" ? "rgba(89, 248, 180, 0.3)" : type === "rollback" ? "rgba(255, 107, 107, 0.3)" : "var(--border-color-tech)"}`,
+                                borderRadius: "var(--radius-inner)",
+                                padding: "10px 14px",
+                                gap: "12px",
+                                transition: "border-color 0.2s ease"
+                              }}
+                              className="backup-row"
+                            >
+                              <div style={{ display: "flex", alignItems: "center", gap: "12px", width: "50%", minWidth: "150px", flexGrow: 1, overflow: "hidden" }}>
+                                <svg style={{ width: 16, height: 16, color: type === "checkpoint" ? "var(--color-green)" : type === "rollback" ? "var(--color-crimson)" : "var(--color-cyan)", flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12l-3-3m0 0l-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                </svg>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "2px", overflow: "hidden", width: "100%" }}>
+                                  {renamingFile === backup.filename ? (
+                                    <div style={{ display: "flex", gap: "8px", alignItems: "center", width: "100%" }}>
+                                      <input
+                                        type="text"
+                                        className="form-input"
+                                        value={newLabel}
+                                        onChange={(e) => setNewLabel(e.target.value)}
+                                        style={{ height: "26px", fontSize: "11px", padding: "0 8px", minHeight: "auto", flexGrow: 1 }}
+                                        autoFocus
+                                        placeholder="New Label"
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter") {
+                                            handleRenameBackup(selectedProfile.id, backup.filename, newLabel);
+                                          } else if (e.key === "Escape") {
+                                            setRenamingFile(null);
+                                          }
+                                        }}
+                                      />
+                                      <button
+                                        className="btn btn-primary"
+                                        style={{ height: "26px", fontSize: "10px", padding: "0 10px", background: "var(--color-green)", color: "#032021" }}
+                                        onClick={() => handleRenameBackup(selectedProfile.id, backup.filename, newLabel)}
+                                      >
+                                        SAVE
+                                      </button>
+                                      <button
+                                        className="btn btn-outline"
+                                        style={{ height: "26px", fontSize: "10px", padding: "0 10px" }}
+                                        onClick={() => setRenamingFile(null)}
+                                      >
+                                        CANCEL
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                        <span 
+                                          style={{
+                                            fontSize: "11.5px",
+                                            fontWeight: "600",
+                                            color: type === "checkpoint" ? "var(--color-green)" : type === "rollback" ? "var(--color-crimson)" : "var(--color-white)",
+                                            whiteSpace: "nowrap",
+                                            overflow: "hidden",
+                                            textOverflow: "ellipsis"
+                                          }}
+                                          title={backup.filename}
+                                        >
+                                          {label}
+                                        </span>
+                                        {type === "checkpoint" && (
+                                          <span style={{ fontSize: "8px", background: "rgba(89, 248, 180, 0.1)", color: "var(--color-green)", border: "1px solid rgba(89, 248, 180, 0.2)", borderRadius: "3px", padding: "1px 4px", fontWeight: "bold" }}>
+                                            CHECKPOINT
+                                          </span>
+                                        )}
+                                        {type === "rollback" && (
+                                          <span style={{ fontSize: "8px", background: "rgba(255, 107, 107, 0.1)", color: "var(--color-crimson)", border: "1px solid rgba(255, 107, 107, 0.2)", borderRadius: "3px", padding: "1px 4px", fontWeight: "bold" }}>
+                                            ROLLBACK
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span style={{ fontSize: "9.5px", color: "var(--color-gray)", fontFamily: "var(--font-mono)" }}>
+                                        {backup.created_at}
+                                      </span>
+                                    </>
+                                  )}
                                 </div>
-                              ) : confirmDeleteFile === backup.filename ? (
-                                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                                  <span style={{ fontSize: "9px", color: "var(--color-crimson)", fontWeight: "bold" }}>DELETE FILE?</span>
-                                  <button 
-                                    className="btn btn-primary" 
-                                    style={{ height: "22px", padding: "0 8px", fontSize: "9px", background: "var(--color-crimson)", color: "white" }}
-                                    onClick={() => handleDelete(selectedProfile.id, backup.filename)}
-                                  >
-                                    YES
-                                  </button>
-                                  <button 
-                                    className="btn btn-outline" 
-                                    style={{ height: "22px", padding: "0 8px", fontSize: "9px" }}
-                                    onClick={() => setConfirmDeleteFile(null)}
-                                  >
-                                    NO
-                                  </button>
-                                </div>
-                              ) : (
-                                <>
-                                  <button 
-                                    className="btn btn-outline" 
-                                    style={{ height: "24px", padding: "0 10px", fontSize: "9px", color: "var(--color-green)", borderColor: "rgba(89, 248, 180, 0.3)" }}
-                                    onClick={() => {
-                                      setConfirmRestoreFile(backup.filename);
-                                      setConfirmDeleteFile(null);
-                                    }}
-                                  >
-                                    RESTORE
-                                  </button>
-                                  <button 
-                                    className="btn btn-danger" 
-                                    style={{ height: "24px", padding: "0 10px", fontSize: "9px" }}
-                                    onClick={() => {
-                                      setConfirmDeleteFile(backup.filename);
-                                      setConfirmRestoreFile(null);
-                                    }}
-                                  >
-                                    DELETE
-                                  </button>
-                                </>
-                              )}
+                              </div>
+
+                              <span style={{ fontSize: "11px", fontFamily: "var(--font-mono)", color: "var(--color-cyan)" }}>
+                                {formatBytes(backup.size_bytes)}
+                              </span>
+
+                              {/* Actions Column */}
+                              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexShrink: 0 }}>
+                                {confirmRestoreFile === backup.filename ? (
+                                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <span style={{ fontSize: "9px", color: "var(--color-yellow)", fontWeight: "bold" }}>OVERWRITE ACTIVE SAVE?</span>
+                                    <button 
+                                      className="btn btn-primary" 
+                                      style={{ height: "22px", padding: "0 8px", fontSize: "9px", background: "var(--color-green)", color: "#032021" }}
+                                      onClick={() => handleRestore(selectedProfile.id, backup.filename)}
+                                    >
+                                      YES
+                                    </button>
+                                    <button 
+                                      className="btn btn-outline" 
+                                      style={{ height: "22px", padding: "0 8px", fontSize: "9px" }}
+                                      onClick={() => setConfirmRestoreFile(null)}
+                                    >
+                                      NO
+                                    </button>
+                                  </div>
+                                ) : confirmDeleteFile === backup.filename ? (
+                                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <span style={{ fontSize: "9px", color: "var(--color-crimson)", fontWeight: "bold" }}>DELETE FILE?</span>
+                                    <button 
+                                      className="btn btn-primary" 
+                                      style={{ height: "22px", padding: "0 8px", fontSize: "9px", background: "var(--color-crimson)", color: "white" }}
+                                      onClick={() => handleDelete(selectedProfile.id, backup.filename)}
+                                    >
+                                      YES
+                                    </button>
+                                    <button 
+                                      className="btn btn-outline" 
+                                      style={{ height: "22px", padding: "0 8px", fontSize: "9px" }}
+                                      onClick={() => setConfirmDeleteFile(null)}
+                                    >
+                                      NO
+                                    </button>
+                                  </div>
+                                ) : (
+                                  !renamingFile && (
+                                    <>
+                                      <button 
+                                        className="btn btn-outline" 
+                                        style={{ height: "24px", padding: "0 10px", fontSize: "9px", color: "var(--color-green)", borderColor: "rgba(89, 248, 180, 0.3)" }}
+                                        onClick={() => {
+                                          setConfirmRestoreFile(backup.filename);
+                                          setConfirmDeleteFile(null);
+                                        }}
+                                      >
+                                        RESTORE
+                                      </button>
+                                      <button 
+                                        className="btn btn-outline" 
+                                        style={{ height: "24px", padding: "0 10px", fontSize: "9px", color: "var(--color-gray)" }}
+                                        onClick={() => {
+                                          setRenamingFile(backup.filename);
+                                          setNewLabel(label === "System Auto-Save" || label.endsWith(" Checkpoint") ? "" : label);
+                                          setConfirmRestoreFile(null);
+                                          setConfirmDeleteFile(null);
+                                        }}
+                                      >
+                                        RENAME
+                                      </button>
+                                      <button 
+                                        className="btn btn-danger" 
+                                        style={{ height: "24px", padding: "0 10px", fontSize: "9px" }}
+                                        onClick={() => {
+                                          setConfirmDeleteFile(backup.filename);
+                                          setConfirmRestoreFile(null);
+                                        }}
+                                      >
+                                        DELETE
+                                      </button>
+                                    </>
+                                  )
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
 

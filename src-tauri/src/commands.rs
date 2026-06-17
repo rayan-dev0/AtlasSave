@@ -216,10 +216,10 @@ pub fn manual_backup_all(app_handle: AppHandle, state: State<'_, AppState>) -> R
     tauri::async_runtime::spawn(async move {
         let archiver = Archiver::new(backups_root);
         for profile in enabled_profiles {
-            let name = profile.name.clone();
+            let name = format!("{}_manual", profile.name);
             let source_path = PathBuf::from(&profile.source_path);
             
-            log_message(&app_handle_clone, format!("Manual backup starting for: {}", name));
+            log_message(&app_handle_clone, format!("Manual backup starting for: {}", profile.name));
             match archiver.archive_profile(&profile.id, &name, &source_path, max_backups) {
                 Ok(zip_path) => {
                     let file_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
@@ -695,11 +695,11 @@ pub fn restore_backup(
     profile_id: String,
     filename: String,
 ) -> Result<(), String> {
-    let (source_path_str, backups_dir) = {
+    let (profile_name, source_path_str, backups_dir, max_backups) = {
         let config = state.config_manager.lock().unwrap();
         let profile = config.data.profiles.iter().find(|p| p.id == profile_id)
             .ok_or_else(|| "Profile not found".to_string())?;
-        (profile.source_path.clone(), config.backups_dir.clone())
+        (profile.name.clone(), profile.source_path.clone(), config.backups_dir.clone(), config.data.global.max_backups)
     };
 
     let zip_path = backups_dir.join(&profile_id).join(&filename);
@@ -713,6 +713,31 @@ pub fn restore_backup(
 
     let app_handle_clone = app_handle.clone();
     tauri::async_runtime::spawn(async move {
+        let archiver = Archiver::new(backups_dir.clone());
+        if source_path.exists() {
+            log_message(&app_handle_clone, format!("Creating rollback backup for: {}", profile_name));
+            let rollback_name = format!("{}_rollback", profile_name);
+            match archiver.archive_profile(&profile_id, &rollback_name, &source_path, max_backups) {
+                Ok(zip_path) => {
+                    log_message(&app_handle_clone, format!("Created permanent rollback backup: {:?}", zip_path));
+                    let file_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
+                    {
+                        let state = app_handle_clone.state::<AppState>();
+                        let mut config = state.config_manager.lock().unwrap();
+                        config.data.stats.total_backups += 1;
+                        config.data.stats.last_backup_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                        let mb_size = file_size as f64 / (1024.0 * 1024.0);
+                        config.data.stats.total_size_mb = (config.data.stats.total_size_mb + mb_size * 100.0).round() / 100.0;
+                        config.save();
+                    }
+                    let _ = app_handle_clone.emit("stats-updated", ());
+                }
+                Err(e) => {
+                    log_message(&app_handle_clone, format!("Failed to create rollback backup: {}", e));
+                }
+            }
+        }
+
         let temp_bak_path = source_path.with_extension("restore_bak");
         
         if source_path.exists() {
@@ -778,6 +803,75 @@ pub fn restore_backup(
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn rename_backup(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    filename: String,
+    new_label: String,
+) -> Result<(), String> {
+    let backups_dir = {
+        let config = state.config_manager.lock().unwrap();
+        config.backups_dir.clone()
+    };
+
+    let profile_backups_dir = backups_dir.join(&profile_id);
+    let old_path = profile_backups_dir.join(&filename);
+
+    if !old_path.exists() {
+        return Err("Backup file does not exist".to_string());
+    }
+
+    // Sanitize the new label name
+    let safe_label: String = new_label
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_' || *c == '-')
+        .collect::<String>()
+        .trim()
+        .replace(' ', "_");
+
+    if safe_label.is_empty() {
+        return Err("New label is empty or invalid".to_string());
+    }
+
+    let old_name_without_ext = old_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // Check if the old filename ends with a timestamp formatted as _YYYYMMDD_HHMMSS
+    // Timestamp contains 15 chars: _YYYYMMDD_HHMMSS (e.g. _20260617_145710)
+    let timestamp = if old_name_without_ext.len() >= 16 {
+        let suffix = &old_name_without_ext[old_name_without_ext.len() - 15..];
+        let chars: Vec<char> = suffix.chars().collect();
+        if chars[0] == '_' && chars[9] == '_' 
+            && chars[1..9].iter().all(|c| c.is_ascii_digit())
+            && chars[10..16].iter().all(|c| c.is_ascii_digit()) {
+            suffix.to_string()
+        } else {
+            format!("_{}", chrono::Local::now().format("%Y%m%d_%H%M%S"))
+        }
+    } else {
+        format!("_{}", chrono::Local::now().format("%Y%m%d_%H%M%S"))
+    };
+
+    let new_filename = format!("{}{}.zip", safe_label, timestamp);
+    let new_path = profile_backups_dir.join(&new_filename);
+
+    if new_path.exists() {
+        return Err("A backup with that name/timestamp already exists".to_string());
+    }
+
+    std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+
+    log_message(&app_handle, format!("[SUCCESS] Backup renamed from {} to {}", filename, new_filename));
+    let _ = app_handle.emit("backups-updated", ());
+
+    Ok(())
+}
+
 
 #[tauri::command]
 pub fn delete_backup(
@@ -856,10 +950,10 @@ pub fn manual_backup_profile(
 
     tauri::async_runtime::spawn(async move {
         let archiver = Archiver::new(backups_root);
-        let name = profile.name.clone();
+        let name = format!("{}_manual", profile.name);
         let source_path = PathBuf::from(&profile.source_path);
 
-        log_message(&app_handle_clone, format!("Manual backup starting for: {}", name));
+        log_message(&app_handle_clone, format!("Manual backup starting for: {}", profile.name));
         match archiver.archive_profile(&profile.id, &name, &source_path, max_backups) {
             Ok(zip_path) => {
                 let file_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);

@@ -43,6 +43,7 @@ pub fn run() {
             commands::search_game_covers,
             commands::get_backups,
             commands::restore_backup,
+            commands::rename_backup,
             commands::delete_backup,
             commands::open_backup_directory,
             commands::manual_backup_profile,
