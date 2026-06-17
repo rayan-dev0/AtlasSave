@@ -162,3 +162,9 @@ On the **Dashboard**, you can check the real-time activity of the watcher.
 - **Manual Sync**: Click **Sync Cloud Now** to pull remote saves from other machines and push your latest local saves in one click.
 - **Backup Now**: Instantly archives the selected game's saves.
 - **Restore points**: Under the game details tab, click **Restore** on any archive row. Enter double-confirmation `YES` to overwrite active saves.
+
+---
+
+## 📈 Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=rayan-dev0/AtlasSave&type=Date)](https://star-history.com/#rayan-dev0/AtlasSave&Date)
