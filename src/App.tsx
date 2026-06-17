@@ -544,9 +544,6 @@ function App() {
               <ShieldIcon
                 className={`w-[22px] h-[22px] transition-all duration-300 ${monitoringActive ? 'text-green drop-shadow-[0_0_8px_var(--color-green)]' : 'text-cyan drop-shadow-[0_0_6px_var(--color-cyan)]'}`}
               />
-              {monitoringActive && (
-                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-green rounded-full animate-ping opacity-75" />
-              )}
             </div>
             <span className="font-sans font-black text-[16px] tracking-[2px] text-white bg-gradient-to-br from-white via-white to-cyan bg-clip-text text-transparent drop-shadow-[0_0_10px_rgba(0,242,254,0.15)]">
               ATLAS SAVE
