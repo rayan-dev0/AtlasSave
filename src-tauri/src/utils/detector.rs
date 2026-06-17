@@ -47,7 +47,10 @@ fn refine_save_path(save_path: PathBuf) -> PathBuf {
         for sub in &["SaveGames", "Saves", "Save"] {
             let deep_path = saved_folder.join(sub);
             if deep_path.exists() && deep_path.is_dir() {
-                println!("Detector: Refining path to deeper UE folder: {:?}", deep_path);
+                println!(
+                    "Detector: Refining path to deeper UE folder: {:?}",
+                    deep_path
+                );
                 return deep_path;
             }
         }
@@ -63,7 +66,10 @@ fn refine_save_path(save_path: PathBuf) -> PathBuf {
         if children.len() == 1 {
             if let Some(folder_name) = children[0].file_name().and_then(|n| n.to_str()) {
                 if folder_name.chars().all(|c| c.is_ascii_digit()) && folder_name.len() >= 7 {
-                    println!("Detector: Refining path to numeric Steam account ID folder: {:?}", children[0]);
+                    println!(
+                        "Detector: Refining path to numeric Steam account ID folder: {:?}",
+                        children[0]
+                    );
                     return children[0].clone();
                 }
             }
@@ -82,10 +88,9 @@ fn find_steam_appid_from_manifest(game_dir: &Path) -> Option<String> {
                         for entry in entries.flatten() {
                             let path = entry.path();
                             if path.is_file()
-                                && path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .map_or(false, |s| s.starts_with("appmanifest_") && s.ends_with(".acf"))
+                                && path.file_name().and_then(|n| n.to_str()).is_some_and(|s| {
+                                    s.starts_with("appmanifest_") && s.ends_with(".acf")
+                                })
                             {
                                 if let Ok(content) = fs::read_to_string(&path) {
                                     let game_name_str = game_name.to_string_lossy().to_string();
@@ -95,7 +100,9 @@ fn find_steam_appid_from_manifest(game_dir: &Path) -> Option<String> {
                                         format!("\"installdir\"\t\"{}\"", game_name_str),
                                     ];
                                     if patterns.iter().any(|p| content.contains(p)) {
-                                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                        if let Some(stem) =
+                                            path.file_stem().and_then(|s| s.to_str())
+                                        {
                                             let parts: Vec<&str> = stem.split('_').collect();
                                             if parts.len() > 1 {
                                                 println!("Detector: Found Steam AppID {} in manifest: {:?}", parts[1], path);
@@ -117,16 +124,24 @@ fn find_steam_appid_from_manifest(game_dir: &Path) -> Option<String> {
 fn expand_win_vars(input: &str) -> String {
     let mut output = input.to_string();
     if let Ok(appdata) = env::var("APPDATA") {
-        output = output.replace("%APPDATA%", &appdata).replace("%appdata%", &appdata);
+        output = output
+            .replace("%APPDATA%", &appdata)
+            .replace("%appdata%", &appdata);
     }
     if let Ok(localappdata) = env::var("LOCALAPPDATA") {
-        output = output.replace("%LOCALAPPDATA%", &localappdata).replace("%localappdata%", &localappdata);
+        output = output
+            .replace("%LOCALAPPDATA%", &localappdata)
+            .replace("%localappdata%", &localappdata);
     }
     if let Ok(public) = env::var("PUBLIC") {
-        output = output.replace("%PUBLIC%", &public).replace("%public%", &public);
+        output = output
+            .replace("%PUBLIC%", &public)
+            .replace("%public%", &public);
     }
     if let Ok(userprofile) = env::var("USERPROFILE") {
-        output = output.replace("%USERPROFILE%", &userprofile).replace("%userprofile%", &userprofile);
+        output = output
+            .replace("%USERPROFILE%", &userprofile)
+            .replace("%userprofile%", &userprofile);
     }
     output
 }
@@ -148,7 +163,10 @@ pub fn detect_save_directory(target_path: PathBuf) -> Option<PathBuf> {
         )
     };
 
-    println!("Detector: Scanning save directory for game: {} inside {:?}", game_name, game_dir);
+    println!(
+        "Detector: Scanning save directory for game: {} inside {:?}",
+        game_name, game_dir
+    );
 
     // --- Strategy A: Parse Emulator Config Files ---
     let ini_files = ["steam_emu.ini", "tenoke.ini", "rune.ini"];
@@ -169,7 +187,10 @@ pub fn detect_save_directory(target_path: PathBuf) -> Option<PathBuf> {
                                     resolved_path = game_dir.join(resolved_path);
                                 }
                                 if resolved_path.exists() {
-                                    println!("Detector: Found custom save path from {}: {:?}", ini, resolved_path);
+                                    println!(
+                                        "Detector: Found custom save path from {}: {:?}",
+                                        ini, resolved_path
+                                    );
                                     return Some(refine_save_path(resolved_path));
                                 }
                             }
@@ -217,16 +238,23 @@ pub fn detect_save_directory(target_path: PathBuf) -> Option<PathBuf> {
 
         for path in emu_paths {
             if path.exists() {
-                println!("Detector: Located offline emulator save path for AppID {}: {:?}", appid_val, path);
+                println!(
+                    "Detector: Located offline emulator save path for AppID {}: {:?}",
+                    appid_val, path
+                );
                 return Some(refine_save_path(path));
             }
         }
 
         // Steam userdata check
-        let program_files_86 = env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
-        let program_files = env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
+        let program_files_86 =
+            env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
+        let program_files =
+            env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
         let steam_paths = [
-            PathBuf::from(program_files_86).join("Steam").join("userdata"),
+            PathBuf::from(program_files_86)
+                .join("Steam")
+                .join("userdata"),
             PathBuf::from(program_files).join("Steam").join("userdata"),
         ];
 
@@ -235,10 +263,18 @@ pub fn detect_save_directory(target_path: PathBuf) -> Option<PathBuf> {
                 if let Ok(entries) = fs::read_dir(sp) {
                     for user_dir in entries.flatten() {
                         let user_path = user_dir.path();
-                        if user_path.is_dir() && user_path.file_name().and_then(|n| n.to_str()).map_or(false, |s| s.chars().all(|c| c.is_ascii_digit())) {
+                        if user_path.is_dir()
+                            && user_path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()))
+                        {
                             let app_save_dir = user_path.join(appid_val);
                             if app_save_dir.exists() {
-                                println!("Detector: Located Steam userdata path for AppID {}: {:?}", appid_val, app_save_dir);
+                                println!(
+                                    "Detector: Located Steam userdata path for AppID {}: {:?}",
+                                    appid_val, app_save_dir
+                                );
                                 return Some(refine_save_path(app_save_dir));
                             }
                         }
@@ -267,7 +303,10 @@ pub fn detect_save_directory(target_path: PathBuf) -> Option<PathBuf> {
             if path.is_dir() {
                 if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
                     if common_subdirs.contains(&folder_name.to_lowercase().as_str()) {
-                        println!("Detector: Located save directory in game folder: {:?}", path);
+                        println!(
+                            "Detector: Located save directory in game folder: {:?}",
+                            path
+                        );
                         return Some(refine_save_path(path));
                     }
                 }
@@ -279,7 +318,10 @@ pub fn detect_save_directory(target_path: PathBuf) -> Option<PathBuf> {
                         if subpath.is_dir() {
                             if let Some(sub_name) = subpath.file_name().and_then(|n| n.to_str()) {
                                 if common_subdirs.contains(&sub_name.to_lowercase().as_str()) {
-                                    println!("Detector: Located save directory in game subfolder: {:?}", subpath);
+                                    println!(
+                                        "Detector: Located save directory in game subfolder: {:?}",
+                                        subpath
+                                    );
                                     return Some(refine_save_path(subpath));
                                 }
                             }
@@ -338,7 +380,10 @@ pub fn detect_save_directory(target_path: PathBuf) -> Option<PathBuf> {
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                         // Level-1 match
                         if is_fuzzy_match(name, &game_name) {
-                            println!("Detector: Fuzzy-detected save directory (Level-1) in {:?}: {:?}", root, path);
+                            println!(
+                                "Detector: Fuzzy-detected save directory (Level-1) in {:?}: {:?}",
+                                root, path
+                            );
                             return Some(refine_save_path(path));
                         }
 
@@ -347,7 +392,9 @@ pub fn detect_save_directory(target_path: PathBuf) -> Option<PathBuf> {
                             for subentry in subentries.flatten() {
                                 let subpath = subentry.path();
                                 if subpath.is_dir() {
-                                    if let Some(sub_name) = subpath.file_name().and_then(|n| n.to_str()) {
+                                    if let Some(sub_name) =
+                                        subpath.file_name().and_then(|n| n.to_str())
+                                    {
                                         if is_fuzzy_match(sub_name, &game_name) {
                                             println!("Detector: Fuzzy-detected save directory (Level-2) in {:?}: {:?}", root, subpath);
                                             return Some(refine_save_path(subpath));
@@ -362,6 +409,9 @@ pub fn detect_save_directory(target_path: PathBuf) -> Option<PathBuf> {
         }
     }
 
-    println!("Detector: Save folder auto-detect unsuccessful for: {}", game_name);
+    println!(
+        "Detector: Save folder auto-detect unsuccessful for: {}",
+        game_name
+    );
     None
 }

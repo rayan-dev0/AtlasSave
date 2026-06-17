@@ -11,7 +11,11 @@ mod utils {
 mod commands;
 
 use std::sync::Arc;
-use tauri::{Emitter, Manager, menu::{Menu, MenuItem}, tray::{TrayIconBuilder, TrayIconEvent}};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager,
+};
 
 pub struct AppState {
     pub config_manager: std::sync::Mutex<config::ConfigManager>,
@@ -54,6 +58,7 @@ pub fn run() {
             commands::get_profile_storage_stats,
             commands::prune_profile_backups,
             commands::scan_steam_library,
+            commands::get_system_storage_stats,
         ])
         .setup(|app| {
             let config_manager = config::ConfigManager::new();
@@ -84,18 +89,31 @@ pub fn run() {
 
                     tauri::async_runtime::spawn(async move {
                         let archiver = core::archiver::Archiver::new(backups_dir);
-                        commands::log_message(&app_handle_clone2, format!("Initiating compression for {}...", name));
-                        
-                        match archiver.archive_profile(&profile_id, &name, &source_path, max_backups) {
+                        commands::log_message(
+                            &app_handle_clone2,
+                            format!("Initiating compression for {}...", name),
+                        );
+
+                        match archiver.archive_profile(
+                            &profile_id,
+                            &name,
+                            &source_path,
+                            max_backups,
+                        ) {
                             Ok(zip_path) => {
-                                let file_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
+                                let file_size =
+                                    std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
                                 {
                                     let state = app_handle_clone2.state::<AppState>();
                                     let mut config = state.config_manager.lock().unwrap();
                                     config.data.stats.total_backups += 1;
-                                    config.data.stats.last_backup_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                                    config.data.stats.last_backup_time = chrono::Local::now()
+                                        .format("%Y-%m-%d %H:%M:%S")
+                                        .to_string();
                                     let mb_size = file_size as f64 / (1024.0 * 1024.0);
-                                    config.data.stats.total_size_mb = (config.data.stats.total_size_mb + mb_size * 100.0).round() / 100.0;
+                                    config.data.stats.total_size_mb =
+                                        (config.data.stats.total_size_mb + mb_size * 100.0).round()
+                                            / 100.0;
                                     config.save();
                                 }
 
@@ -108,7 +126,10 @@ pub fn run() {
                                 let _ = app_handle_clone2.emit("stats-updated", ());
                             }
                             Err(e) => {
-                                commands::log_message(&app_handle_clone2, format!("Archival failed: {}", e));
+                                commands::log_message(
+                                    &app_handle_clone2,
+                                    format!("Archival failed: {}", e),
+                                );
                             }
                         }
                     });
@@ -143,7 +164,13 @@ pub fn run() {
 
             // 3. System Tray configurations
             let show_item = MenuItem::with_id(app, "show", "Open UI", true, None::<&str>)?;
-            let toggle_item = MenuItem::with_id(app, "toggle_monitor", "Toggle Monitoring", true, None::<&str>)?;
+            let toggle_item = MenuItem::with_id(
+                app,
+                "toggle_monitor",
+                "Toggle Monitoring",
+                true,
+                None::<&str>,
+            )?;
             let quit_item = MenuItem::with_id(app, "quit", "Exit AtlasSave", true, None::<&str>)?;
             let tray_menu = Menu::with_items(app, &[&show_item, &toggle_item, &quit_item])?;
 
@@ -171,7 +198,11 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. } = event {
+                    if let TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Left,
+                        ..
+                    } = event
+                    {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
@@ -189,7 +220,10 @@ pub fn run() {
                     api.prevent_close();
                     let _ = window_clone.hide();
                     let app_handle = window_clone.app_handle();
-                    commands::log_message(app_handle, "AtlasSave minimized to system tray.".to_string());
+                    commands::log_message(
+                        app_handle,
+                        "AtlasSave minimized to system tray.".to_string(),
+                    );
                 }
             });
 

@@ -1,10 +1,10 @@
+use crate::config::ProvidersConfig;
+use crate::AppState;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use crate::config::ProvidersConfig;
-use crate::AppState;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -64,18 +64,33 @@ impl Uploader {
         mut receiver: UnboundedReceiver<UploadTask>,
     ) {
         while let Some(task) = receiver.recv().await {
-            let file_name = task.file_path.file_name().unwrap().to_string_lossy().to_string();
-            
+            let file_name = task
+                .file_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+
             // 1. Local copy backup (NAS)
-            if task.providers.local_backup.enabled && !task.providers.local_backup.destination_path.is_empty() {
+            if task.providers.local_backup.enabled
+                && !task.providers.local_backup.destination_path.is_empty()
+            {
                 let dest_dir = Path::new(&task.providers.local_backup.destination_path);
                 if let Err(e) = fs::create_dir_all(dest_dir) {
-                    Self::log(&app_handle, format!("Local backup failed: folder creation error: {}", e));
+                    Self::log(
+                        &app_handle,
+                        format!("Local backup failed: folder creation error: {}", e),
+                    );
                 } else {
                     let dest_file = dest_dir.join(&file_name);
                     match fs::copy(&task.file_path, &dest_file) {
-                        Ok(_) => Self::log(&app_handle, format!("Local copy backup successful: {}", file_name)),
-                        Err(e) => Self::log(&app_handle, format!("Local copy backup failed: {}", e)),
+                        Ok(_) => Self::log(
+                            &app_handle,
+                            format!("Local copy backup successful: {}", file_name),
+                        ),
+                        Err(e) => {
+                            Self::log(&app_handle, format!("Local copy backup failed: {}", e))
+                        }
                     }
                 }
             }
@@ -84,23 +99,40 @@ impl Uploader {
             if task.providers.git.enabled && !task.providers.git.repo_url.is_empty() {
                 let sanitized_game = sanitize_profile_name(&task.profile_name);
                 let dest_dir = git_dir.join(&sanitized_game);
-                
-                Self::log(&app_handle, format!("Staging backup locally in Git repo under folder: {}", sanitized_game));
-                
+
+                Self::log(
+                    &app_handle,
+                    format!(
+                        "Staging backup locally in Git repo under folder: {}",
+                        sanitized_game
+                    ),
+                );
+
                 if let Err(e) = fs::create_dir_all(&dest_dir) {
-                    Self::log(&app_handle, format!("Git local stage failed: folder creation error: {}", e));
+                    Self::log(
+                        &app_handle,
+                        format!("Git local stage failed: folder creation error: {}", e),
+                    );
                 } else {
                     let dest_file = dest_dir.join(&file_name);
                     match fs::copy(&task.file_path, &dest_file) {
                         Ok(_) => {
-                            Self::log(&app_handle, format!("Local Git stage successful: {}", file_name));
+                            Self::log(
+                                &app_handle,
+                                format!("Local Git stage successful: {}", file_name),
+                            );
                             // If sync interval is set to 0 (Real-time), trigger sync immediately
                             if task.providers.git.sync_interval_mins == 0 {
                                 let backups_dir = git_dir.parent().unwrap().join("backups");
                                 let app_handle_clone = app_handle.clone();
                                 let git_dir_clone = git_dir.clone();
                                 tauri::async_runtime::spawn(async move {
-                                    let _ = Self::perform_full_sync(&app_handle_clone, &git_dir_clone, &backups_dir).await;
+                                    let _ = Self::perform_full_sync(
+                                        &app_handle_clone,
+                                        &git_dir_clone,
+                                        &backups_dir,
+                                    )
+                                    .await;
                                 });
                             }
                         }
@@ -111,11 +143,7 @@ impl Uploader {
         }
     }
 
-    async fn sync_scheduler_loop(
-        app_handle: AppHandle,
-        git_dir: PathBuf,
-        backups_dir: PathBuf,
-    ) {
+    async fn sync_scheduler_loop(app_handle: AppHandle, git_dir: PathBuf, backups_dir: PathBuf) {
         // Delay 10 seconds on startup to let app initialize fully
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
 
@@ -132,8 +160,14 @@ impl Uploader {
         };
 
         // If auto fetch is enabled, do a sync on startup
-        if git_config_startup.enabled && !git_config_startup.repo_url.is_empty() && git_config_startup.auto_fetch {
-            Self::log(&app_handle, "Auto-fetch enabled. Running startup Git sync...".to_string());
+        if git_config_startup.enabled
+            && !git_config_startup.repo_url.is_empty()
+            && git_config_startup.auto_fetch
+        {
+            Self::log(
+                &app_handle,
+                "Auto-fetch enabled. Running startup Git sync...".to_string(),
+            );
             let _ = Self::perform_full_sync(&app_handle, &git_dir, &backups_dir).await;
         }
 
@@ -153,7 +187,10 @@ impl Uploader {
                 }
             };
 
-            if git_config.enabled && !git_config.repo_url.is_empty() && git_config.sync_interval_mins > 0 {
+            if git_config.enabled
+                && !git_config.repo_url.is_empty()
+                && git_config.sync_interval_mins > 0
+            {
                 let elapsed = last_sync.elapsed().as_secs() / 60;
                 if elapsed >= git_config.sync_interval_mins as u64 {
                     let _ = Self::perform_full_sync(&app_handle, &git_dir, &backups_dir).await;
@@ -171,25 +208,42 @@ impl Uploader {
         fs::create_dir_all(git_dir).map_err(|e| e.to_string())?;
 
         if !git_dir.join(".git").exists() {
-            Self::log(app_handle, "Initializing local Git repository...".to_string());
+            Self::log(
+                app_handle,
+                "Initializing local Git repository...".to_string(),
+            );
             Self::run_git_cmd(git_dir, &["init"])?;
-            
+
             let _ = Self::run_git_cmd(git_dir, &["remote", "add", "origin", &git_config.repo_url]);
             let _ = Self::run_git_cmd(git_dir, &["branch", "-M", &git_config.branch]);
         } else {
-            let _ = Self::run_git_cmd(git_dir, &["remote", "set-url", "origin", &git_config.repo_url]);
+            let _ = Self::run_git_cmd(
+                git_dir,
+                &["remote", "set-url", "origin", &git_config.repo_url],
+            );
         }
 
         // Apply config options
-        let user_name = if git_config.user_name.trim().is_empty() { "AtlasSave Bot" } else { &git_config.user_name };
-        let user_email = if git_config.user_email.trim().is_empty() { "bot@atlassave.local" } else { &git_config.user_email };
+        let user_name = if git_config.user_name.trim().is_empty() {
+            "AtlasSave Bot"
+        } else {
+            &git_config.user_name
+        };
+        let user_email = if git_config.user_email.trim().is_empty() {
+            "bot@atlassave.local"
+        } else {
+            &git_config.user_email
+        };
         Self::run_git_cmd(git_dir, &["config", "user.name", user_name])?;
         Self::run_git_cmd(git_dir, &["config", "user.email", user_email])?;
 
         // Apply SSH options
         let ssh_command = if git_config.accept_new_hosts {
             if !git_config.ssh_key_path.trim().is_empty() {
-                format!("ssh -i \"{}\" -o StrictHostKeyChecking=accept-new", git_config.ssh_key_path)
+                format!(
+                    "ssh -i \"{}\" -o StrictHostKeyChecking=accept-new",
+                    git_config.ssh_key_path
+                )
             } else {
                 "ssh -o StrictHostKeyChecking=accept-new".to_string()
             }
@@ -238,23 +292,28 @@ impl Uploader {
         if git_config.auto_fetch {
             Self::log(app_handle, "Fetching remote updates...".to_string());
             let _ = Self::run_git_cmd(git_dir, &["fetch", "origin"]);
-            
-            let pull_res = Self::run_git_cmd(git_dir, &[
-                "pull", 
-                "origin", 
-                &git_config.branch, 
-                "--rebase", 
-                "-X", 
-                "theirs"
-            ]);
-            
+
+            let pull_res = Self::run_git_cmd(
+                git_dir,
+                &[
+                    "pull",
+                    "origin",
+                    &git_config.branch,
+                    "--rebase",
+                    "-X",
+                    "theirs",
+                ],
+            );
+
             match pull_res {
                 Ok(_) => Self::log(app_handle, "Pull complete.".to_string()),
                 Err(e) => Self::log(app_handle, format!("Pull notes: {}", e)),
             }
 
             // 3. Scan remote ZIPs and copy them back to local backups_dir
-            if let Err(e) = Self::sync_remote_zips_to_local_backups(app_handle, git_dir, backups_dir) {
+            if let Err(e) =
+                Self::sync_remote_zips_to_local_backups(app_handle, git_dir, backups_dir)
+            {
                 Self::log(app_handle, format!("Importing remote saves failed: {}", e));
             }
         }
@@ -263,7 +322,10 @@ impl Uploader {
         match Self::run_git_cmd(git_dir, &["status", "--porcelain"]) {
             Ok(status) => {
                 if !status.trim().is_empty() {
-                    Self::log(app_handle, "Unsynced local saves detected. Committing and pushing...".to_string());
+                    Self::log(
+                        app_handle,
+                        "Unsynced local saves detected. Committing and pushing...".to_string(),
+                    );
                     if let Err(e) = Self::run_git_cmd(git_dir, &["add", "."]) {
                         Self::log(app_handle, format!("Git add error: {}", e));
                         return Err(e);
@@ -274,22 +336,46 @@ impl Uploader {
                         Self::log(app_handle, format!("Git commit error: {}", e));
                         return Err(e);
                     }
-                    
+
                     // Push
                     match Self::run_git_cmd(git_dir, &["push", "origin", &git_config.branch]) {
-                        Ok(_) => Self::log(app_handle, "Git sync pushes completed successfully!".to_string()),
+                        Ok(_) => Self::log(
+                            app_handle,
+                            "Git sync pushes completed successfully!".to_string(),
+                        ),
                         Err(e) => {
-                            Self::log(app_handle, format!("Push failed: {}. Retrying push rebase...", e));
-                            let _ = Self::run_git_cmd(git_dir, &["pull", "origin", &git_config.branch, "--rebase", "-X", "theirs"]);
-                            if let Err(e2) = Self::run_git_cmd(git_dir, &["push", "origin", &git_config.branch]) {
+                            Self::log(
+                                app_handle,
+                                format!("Push failed: {}. Retrying push rebase...", e),
+                            );
+                            let _ = Self::run_git_cmd(
+                                git_dir,
+                                &[
+                                    "pull",
+                                    "origin",
+                                    &git_config.branch,
+                                    "--rebase",
+                                    "-X",
+                                    "theirs",
+                                ],
+                            );
+                            if let Err(e2) =
+                                Self::run_git_cmd(git_dir, &["push", "origin", &git_config.branch])
+                            {
                                 Self::log(app_handle, format!("Git push retry failed: {}", e2));
                                 return Err(e2);
                             }
-                            Self::log(app_handle, "Git sync push retry completed successfully!".to_string());
+                            Self::log(
+                                app_handle,
+                                "Git sync push retry completed successfully!".to_string(),
+                            );
                         }
                     }
                 } else {
-                    Self::log(app_handle, "Git sync completed. Already up to date.".to_string());
+                    Self::log(
+                        app_handle,
+                        "Git sync completed. Already up to date.".to_string(),
+                    );
                 }
             }
             Err(e) => {
@@ -322,7 +408,7 @@ impl Uploader {
         for profile in profiles {
             let sanitized_name = sanitize_profile_name(&profile.name);
             let profile_git_dir = git_dir.join(&sanitized_name);
-            
+
             if profile_git_dir.exists() && profile_git_dir.is_dir() {
                 let profile_backups_dir = backups_dir.join(&profile.id);
                 std::fs::create_dir_all(&profile_backups_dir).map_err(|e| e.to_string())?;
@@ -330,12 +416,18 @@ impl Uploader {
                 if let Ok(entries) = std::fs::read_dir(profile_git_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.is_file() && path.extension().map_or(false, |ext| ext == "zip") {
+                        if path.is_file() && path.extension().is_some_and(|ext| ext == "zip") {
                             let filename = path.file_name().unwrap();
                             let dest_file = profile_backups_dir.join(filename);
                             if !dest_file.exists() {
                                 std::fs::copy(&path, &dest_file).map_err(|e| e.to_string())?;
-                                Self::log(app_handle, format!("Sync: Imported remote backup file {}", filename.to_string_lossy()));
+                                Self::log(
+                                    app_handle,
+                                    format!(
+                                        "Sync: Imported remote backup file {}",
+                                        filename.to_string_lossy()
+                                    ),
+                                );
                             }
                         }
                     }
@@ -363,7 +455,7 @@ impl Uploader {
 
     pub fn test_git_connection(repo_url: &str) -> Result<String, String> {
         let mut cmd = Command::new("git");
-        cmd.args(&["ls-remote", repo_url]);
+        cmd.args(["ls-remote", repo_url]);
         cmd.env("GIT_SSH_COMMAND", "ssh -o StrictHostKeyChecking=accept-new");
 
         #[cfg(target_os = "windows")]

@@ -1,0 +1,47 @@
+#!/bin/sh
+
+echo "🔥 [Engine] Running inspection..."
+
+# if ! npm run lint; then
+#   echo ""
+#   echo "🥪 \"LINT ERRORS?! What are you? An idiot sandwich! Clean up this kitchen!\""
+#   echo "🚪 One does not simply commit code with lint errors."
+#   echo "🔴 Commit rejected."
+#   exit 1
+# fi
+
+if ! npm run format:check; then
+  echo ""
+  echo "🥩 \"IT'S FUCKING RAW! The code formatting is absolutely raw!\""
+  echo "🐕 Much unformatted. Very chaos. Such messy. Wow."
+  echo "💡 Run 'npm run format' to cook it properly."
+  echo "🔴 Commit rejected."
+  exit 1
+fi
+
+if ! npm run typecheck; then
+  echo ""
+  echo "🌩️ TypeScript compiler: \"Am I a joke to you?\""
+  echo "🙀 Fix the compilation! (Surprised Pikachu face)"
+  echo "🔴 Commit rejected."
+  exit 1
+fi
+
+if ! cargo fmt --manifest-path src-tauri/Cargo.toml -- --check; then
+  echo ""
+  echo "🙅 Drake says NO to unformatted Rust code!"
+  echo "💡 Run 'cargo fmt --manifest-path src-tauri/Cargo.toml' to fix it."
+  echo "🔴 Commit rejected."
+  exit 1
+fi
+
+if ! cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings; then
+  echo ""
+  echo "💻 \"It works on my machine!\" is not a valid excuse. Clippy is crying."
+  echo "🔴 Commit rejected."
+  exit 1
+fi
+
+echo ""
+echo "🗿 Average GigaChad Developer code. Cooked to perfection. Commit approved!"
+exit 0
