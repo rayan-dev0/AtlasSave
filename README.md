@@ -14,11 +14,31 @@ It watches your game save directories in real-time, compresses them into timesta
 
 ---
 
-## 📸 Application Preview
+## 📸 Application Screenshots
 
-![AtlasSave Premium Dashboard Mockup](src/assets/dashboard_preview.png)
+### 🖥️ Main Dashboard
 
----
+![Main Dashboard](docs/assets/Dashboard.png)
+
+### 🌳 Save Version Explorer (Tree View)
+
+![Save Tree Explorer](docs/assets/View-Save-Tree.png)
+
+### 🎮 Game Profiles
+
+![Game Profiles Management](docs/assets/Game-profiles.png)
+
+### 🐙 Backup Providers
+
+![Backup Providers Config](docs/assets/Provider.png)
+
+### ⚙️ General Settings
+
+![General Settings](docs/assets/Settings-1.png)
+
+### 🌗 Themes
+
+## ![Themes](docs/assets/Settings-2.png)
 
 ## 🚀 Key Features
 
