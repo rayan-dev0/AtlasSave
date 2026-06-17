@@ -19,6 +19,7 @@ import { GameProfilesView } from './components/GameProfiles';
 import { ProvidersView } from './components/Providers';
 import { SettingsPanel } from './components/Settings';
 import { OnboardingView } from './components/Onboarding';
+import { SaveTreeView } from './components/SaveTree';
 
 const DEFAULT_CONFIG: Config = {
   global: { run_on_startup: false, max_backups: 10, debounce_seconds: 5, steamgriddb_api_key: '' },
@@ -42,7 +43,7 @@ const DEFAULT_CONFIG: Config = {
 
 function App() {
   const [activeView, setActiveView] = useState<
-    'onboarding' | 'dashboard' | 'profiles' | 'providers' | 'settings'
+    'onboarding' | 'dashboard' | 'profiles' | 'providers' | 'save_tree' | 'settings'
   >('dashboard');
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [monitoringActive, setMonitoringActive] = useState<boolean>(true);
@@ -80,6 +81,17 @@ function App() {
   const [gitSshKeyPath, setGitSshKeyPath] = useState('');
   const [gitAcceptNewHosts, setAcceptNewHosts] = useState(true);
   const [gitSyncing, setGitSyncing] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+
+  // Contextual redirect state for Save Playthrough Controller
+  const [saveTreeInitialProfileId, setSaveTreeInitialProfileId] = useState<string | null>(null);
+  const [saveTreeInitialOpenCreate, setSaveTreeInitialOpenCreate] = useState<boolean>(false);
+
+  const handleNavigateToSaveTree = (profileId: string, openCreate: boolean = false) => {
+    setSaveTreeInitialProfileId(profileId);
+    setSaveTreeInitialOpenCreate(openCreate);
+    setActiveView('save_tree');
+  };
 
   const [localEnabled, setLocalEnabled] = useState(false);
   const [localPath, setLocalPath] = useState('');
@@ -180,11 +192,21 @@ function App() {
       window.dispatchEvent(new CustomEvent('refresh-backups'));
     });
 
+    const unlistenGitSyncStatus = listen<string>('git-sync-status', (event) => {
+      setGitSyncing(event.payload === 'running');
+    });
+
+    const unlistenBackupStatus = listen<string>('backup-status', (event) => {
+      setBackingUp(event.payload === 'running');
+    });
+
     return () => {
       unlistenLog.then((f) => f());
       unlistenUploader.then((f) => f());
       unlistenStats.then((f) => f());
       unlistenBackups.then((f) => f());
+      unlistenGitSyncStatus.then((f) => f());
+      unlistenBackupStatus.then((f) => f());
     };
   }, []);
 
@@ -208,6 +230,11 @@ function App() {
   };
 
   const handleManualBackup = async () => {
+    const confirm = window.confirm(
+      'Are you sure you want to back up all enabled game profiles now? This will compress and archive active saves.'
+    );
+    if (!confirm) return;
+
     try {
       await invoke('manual_backup_all');
       appendLocalLog('[SUCCESS] Manual backup dispatch triggered successfully.');
@@ -413,14 +440,11 @@ function App() {
   };
 
   const handleTriggerGitSync = async () => {
-    setGitSyncing(true);
     appendLocalLog('Initiating manual Git cloud sync (Pull + Push)...');
     try {
       await invoke('trigger_git_sync');
     } catch (err) {
       appendLocalLog(`[ERROR] Git sync failed to start: ${err}`);
-    } finally {
-      setGitSyncing(false);
     }
   };
 
@@ -513,79 +537,198 @@ function App() {
     <div className="flex h-screen w-screen overflow-hidden">
       {/* 1. Left Sidebar Navigation */}
       <aside className="w-[240px] bg-[#040808]/85 backdrop-blur-[10px] border-r border-tech-border flex flex-col p-0 shrink-0 z-10">
-        <div className="flex items-center gap-3 py-7 px-6 border-b border-tech-border/25">
-          <ShieldIcon className="w-[22px] h-[22px] text-cyan drop-shadow-[0_0_6px_var(--color-cyan)]" />
-          <span className="font-sans font-bold text-[17px] tracking-[2.5px] text-white bg-gradient-to-br from-white to-cyan bg-clip-text text-transparent drop-shadow-[0_0_10px_rgba(0,242,254,0.25)]">
-            ATLAS SAVE
-          </span>
+        {/* Sidebar Header & Logo */}
+        <div className="flex flex-col gap-1.5 py-6 px-6 border-b border-tech-border/25 bg-[#010303]/40">
+          <div className="flex items-center gap-2.5">
+            <div className="relative">
+              <ShieldIcon
+                className={`w-[22px] h-[22px] transition-all duration-300 ${monitoringActive ? 'text-green drop-shadow-[0_0_8px_var(--color-green)]' : 'text-cyan drop-shadow-[0_0_6px_var(--color-cyan)]'}`}
+              />
+              {monitoringActive && (
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-green rounded-full animate-ping opacity-75" />
+              )}
+            </div>
+            <span className="font-sans font-black text-[16px] tracking-[2px] text-white bg-gradient-to-br from-white via-white to-cyan bg-clip-text text-transparent drop-shadow-[0_0_10px_rgba(0,242,254,0.15)]">
+              ATLAS SAVE
+            </span>
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${monitoringActive ? 'bg-green animate-pulse shadow-[0_0_4px_var(--color-green)]' : 'bg-yellow shadow-[0_0_4px_var(--color-yellow)]'}`}
+            ></span>
+            <span className="font-mono text-[9px] font-bold tracking-[0.5px] text-gray uppercase">
+              {monitoringActive ? 'Engine: Active' : 'Engine: Paused'}
+            </span>
+          </div>
         </div>
 
-        <nav className="flex flex-col gap-1.5 py-6 px-3 grow">
-          <div
-            className={`flex items-center w-full border-none bg-transparent cursor-pointer outline-none relative rounded-inner overflow-hidden transition-all duration-200 hover:bg-white/3 ${activeView === 'dashboard' ? 'bg-cyan/6' : ''}`}
+        {/* Scrollable Navigation Area */}
+        <nav className="flex flex-col gap-2.5 py-6 px-3 grow overflow-y-auto scrollbar">
+          <button
             onClick={() => setActiveView('dashboard')}
+            className={`group flex items-center w-full border-y border-r border-transparent border-l-2 cursor-pointer outline-none relative rounded-r-lg overflow-hidden transition-all duration-200 py-3 px-4 gap-3.5 text-left font-sans text-[11.5px] tracking-[0.8px] font-semibold
+              ${
+                activeView === 'dashboard'
+                  ? 'bg-gradient-to-r from-cyan/8 to-cyan/[0.01] text-cyan border-l-cyan shadow-[0_0_12px_rgba(0,242,254,0.03)]'
+                  : 'bg-transparent text-gray hover:bg-white/[0.03] hover:text-white hover:translate-x-1 border-l-transparent hover:border-l-cyan/30'
+              }`}
           >
-            <div
-              className={`w-[3px] h-[38px] absolute left-0 top-1/2 -translate-y-1/2 transition-all duration-200 ${activeView === 'dashboard' ? 'bg-cyan shadow-[0_0_8px_var(--color-cyan)]' : 'bg-transparent'}`}
-            ></div>
-            <button
-              className={`w-full border-none bg-transparent flex items-center gap-3 py-2.75 px-4 text-gray font-sans font-medium text-[12.5px] text-left cursor-pointer transition-all duration-200 hover:text-white ${activeView === 'dashboard' ? 'text-cyan font-semibold' : ''}`}
-            >
-              <DashboardIcon />
-              DASHBOARD
-            </button>
-          </div>
+            <DashboardIcon
+              className={`transition-all duration-200 ${activeView === 'dashboard' ? 'text-cyan scale-110 drop-shadow-[0_0_5px_var(--color-cyan)]' : 'text-gray/50 group-hover:text-white group-hover:scale-105'}`}
+            />
+            DASHBOARD
+          </button>
 
-          <div
-            className={`flex items-center w-full border-none bg-transparent cursor-pointer outline-none relative rounded-inner overflow-hidden transition-all duration-200 hover:bg-white/3 ${activeView === 'profiles' ? 'bg-cyan/6' : ''}`}
+          <button
             onClick={() => setActiveView('profiles')}
+            className={`group flex items-center w-full border-y border-r border-transparent border-l-2 cursor-pointer outline-none relative rounded-r-lg overflow-hidden transition-all duration-200 py-3 px-4 gap-3.5 text-left font-sans text-[11.5px] tracking-[0.8px] font-semibold
+              ${
+                activeView === 'profiles'
+                  ? 'bg-gradient-to-r from-cyan/8 to-cyan/[0.01] text-cyan border-l-cyan shadow-[0_0_12px_rgba(0,242,254,0.03)]'
+                  : 'bg-transparent text-gray hover:bg-white/[0.03] hover:text-white hover:translate-x-1 border-l-transparent hover:border-l-cyan/30'
+              }`}
           >
-            <div
-              className={`w-[3px] h-[38px] absolute left-0 top-1/2 -translate-y-1/2 transition-all duration-200 ${activeView === 'profiles' ? 'bg-cyan shadow-[0_0_8px_var(--color-cyan)]' : 'bg-transparent'}`}
-            ></div>
-            <button
-              className={`w-full border-none bg-transparent flex items-center gap-3 py-2.75 px-4 text-gray font-sans font-medium text-[12.5px] text-left cursor-pointer transition-all duration-200 hover:text-white ${activeView === 'profiles' ? 'text-cyan font-semibold' : ''}`}
-            >
-              <GamepadIcon />
-              GAME PROFILES
-            </button>
-          </div>
+            <GamepadIcon
+              className={`transition-all duration-200 ${activeView === 'profiles' ? 'text-cyan scale-110 drop-shadow-[0_0_5px_var(--color-cyan)]' : 'text-gray/50 group-hover:text-white group-hover:scale-105'}`}
+            />
+            GAME PROFILES
+          </button>
 
-          <div
-            className={`flex items-center w-full border-none bg-transparent cursor-pointer outline-none relative rounded-inner overflow-hidden transition-all duration-200 hover:bg-white/3 ${activeView === 'providers' ? 'bg-cyan/6' : ''}`}
+          <button
             onClick={() => setActiveView('providers')}
+            className={`group flex items-center w-full border-y border-r border-transparent border-l-2 cursor-pointer outline-none relative rounded-r-lg overflow-hidden transition-all duration-200 py-3 px-4 gap-3.5 text-left font-sans text-[11.5px] tracking-[0.8px] font-semibold
+              ${
+                activeView === 'providers'
+                  ? 'bg-gradient-to-r from-cyan/8 to-cyan/[0.01] text-cyan border-l-cyan shadow-[0_0_12px_rgba(0,242,254,0.03)]'
+                  : 'bg-transparent text-gray hover:bg-white/[0.03] hover:text-white hover:translate-x-1 border-l-transparent hover:border-l-cyan/30'
+              }`}
           >
-            <div
-              className={`w-[3px] h-[38px] absolute left-0 top-1/2 -translate-y-1/2 transition-all duration-200 ${activeView === 'providers' ? 'bg-cyan shadow-[0_0_8px_var(--color-cyan)]' : 'bg-transparent'}`}
-            ></div>
+            <CloudIcon
+              className={`transition-all duration-200 ${activeView === 'providers' ? 'text-cyan scale-110 drop-shadow-[0_0_5px_var(--color-cyan)]' : 'text-gray/50 group-hover:text-white group-hover:scale-105'}`}
+            />
+            PROVIDERS
+          </button>
+
+          <button
+            onClick={() => {
+              setSaveTreeInitialProfileId(null);
+              setSaveTreeInitialOpenCreate(false);
+              setActiveView('save_tree');
+            }}
+            className={`group flex items-center w-full border-y border-r border-transparent border-l-2 cursor-pointer outline-none relative rounded-r-lg overflow-hidden transition-all duration-200 py-3 px-4 gap-3.5 text-left font-sans text-[11.5px] tracking-[0.8px] font-semibold
+              ${
+                activeView === 'save_tree'
+                  ? 'bg-gradient-to-r from-cyan/8 to-cyan/[0.01] text-cyan border-l-cyan shadow-[0_0_12px_rgba(0,242,254,0.03)]'
+                  : 'bg-transparent text-gray hover:bg-white/[0.03] hover:text-white hover:translate-x-1 border-l-transparent hover:border-l-cyan/30'
+              }`}
+          >
+            <SaveTreeIcon
+              className={`transition-all duration-200 ${activeView === 'save_tree' ? 'text-cyan scale-110 drop-shadow-[0_0_5px_var(--color-cyan)]' : 'text-gray/50 group-hover:text-white group-hover:scale-105'}`}
+            />
+            VIEW SAVE TREE
+          </button>
+
+          <button
+            onClick={() => setActiveView('settings')}
+            className={`group flex items-center w-full border-y border-r border-transparent border-l-2 cursor-pointer outline-none relative rounded-r-lg overflow-hidden transition-all duration-200 py-3 px-4 gap-3.5 text-left font-sans text-[11.5px] tracking-[0.8px] font-semibold
+              ${
+                activeView === 'settings'
+                  ? 'bg-gradient-to-r from-cyan/8 to-cyan/[0.01] text-cyan border-l-cyan shadow-[0_0_12px_rgba(0,242,254,0.03)]'
+                  : 'bg-transparent text-gray hover:bg-white/[0.03] hover:text-white hover:translate-x-1 border-l-transparent hover:border-l-cyan/30'
+              }`}
+          >
+            <SettingsIcon
+              className={`transition-all duration-200 ${activeView === 'settings' ? 'text-cyan scale-110 drop-shadow-[0_0_5px_var(--color-cyan)]' : 'text-gray/50 group-hover:text-white group-hover:scale-105'}`}
+            />
+            SETTINGS
+          </button>
+        </nav>
+
+        {/* Sidebar Status Footer */}
+        <div className="mt-auto border-t border-tech-border/20 bg-[#020505]/45 p-4 flex flex-col gap-3 shrink-0">
+          {/* Watcher Engine Control */}
+          <div className="flex flex-col gap-1.5 p-2.5 rounded-lg border border-tech-border/15 bg-bg-dark/40 hover:border-cyan/25 transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-gray uppercase tracking-wider font-semibold select-none">
+                SAVE WATCHER
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 text-[9.5px] font-bold ${monitoringActive ? 'text-green' : 'text-yellow'} select-none`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${monitoringActive ? 'bg-green animate-pulse shadow-[0_0_5px_var(--color-green)]' : 'bg-yellow'}`}
+                ></span>
+                {monitoringActive ? 'WATCHING' : 'PAUSED'}
+              </span>
+            </div>
+
             <button
-              className={`w-full border-none bg-transparent flex items-center gap-3 py-2.75 px-4 text-gray font-sans font-medium text-[12.5px] text-left cursor-pointer transition-all duration-200 hover:text-white ${activeView === 'providers' ? 'text-cyan font-semibold' : ''}`}
+              onClick={handleToggleMonitoring}
+              className={`w-full py-1.5 px-2 text-[10px] rounded border font-mono tracking-[0.5px] transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5
+                ${
+                  monitoringActive
+                    ? 'border-yellow/25 bg-yellow/5 hover:bg-yellow/10 text-yellow hover:border-yellow'
+                    : 'border-green/25 bg-green/5 hover:bg-green/10 text-green font-bold hover:border-green'
+                }`}
             >
-              <CloudIcon />
-              PROVIDERS
+              {monitoringActive ? 'PAUSE WATCHING' : 'RESUME WATCHING'}
             </button>
           </div>
 
-          <div
-            className={`flex items-center w-full border-none bg-transparent cursor-pointer outline-none relative rounded-inner overflow-hidden transition-all duration-200 hover:bg-white/3 ${activeView === 'settings' ? 'bg-cyan/6' : ''}`}
-            onClick={() => setActiveView('settings')}
-          >
-            <div
-              className={`w-[3px] h-[38px] absolute left-0 top-1/2 -translate-y-1/2 transition-all duration-200 ${activeView === 'settings' ? 'bg-cyan shadow-[0_0_8px_var(--color-cyan)]' : 'bg-transparent'}`}
-            ></div>
-            <button
-              className={`w-full border-none bg-transparent flex items-center gap-3 py-2.75 px-4 text-gray font-sans font-medium text-[12.5px] text-left cursor-pointer transition-all duration-200 hover:text-white ${activeView === 'settings' ? 'text-cyan font-semibold' : ''}`}
-            >
-              <SettingsIcon />
-              SETTINGS
-            </button>
+          {/* Quick Metrics Panel */}
+          <div className="flex flex-col gap-1.5 text-[11px] text-gray/90 px-1 font-sans select-none">
+            <div className="flex items-center justify-between">
+              <span>Game Profiles:</span>
+              <span className="font-mono text-[11.5px] text-white font-semibold">
+                {config.profiles.filter((p) => p.enabled).length}{' '}
+                <span className="text-gray/40">/</span> {config.profiles.length}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Total Backups:</span>
+              <span className="font-mono text-[11.5px] text-white font-semibold">
+                {config.stats.total_backups}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Disk Storage:</span>
+              <span className="font-mono text-[11.5px] text-white font-semibold">
+                {config.stats.total_size_mb.toFixed(1)} MB
+              </span>
+            </div>
+            <div className="flex items-center justify-between pt-1 border-t border-tech-border/10">
+              <span>Cloud Sync:</span>
+              <span className="font-mono text-[10.5px]">
+                {gitEnabled ? (
+                  gitSyncing ? (
+                    <span className="text-cyan animate-pulse font-bold flex items-center gap-1.5">
+                      <span className="w-1 h-1 bg-cyan rounded-full animate-ping"></span>
+                      SYNCING...
+                    </span>
+                  ) : (
+                    <span className="text-green font-bold">READY</span>
+                  )
+                ) : (
+                  <span className="text-gray/55">DISABLED</span>
+                )}
+              </span>
+            </div>
+            {backingUp && (
+              <div className="flex items-center justify-between pt-1 border-t border-tech-border/10 text-[10.5px]">
+                <span className="text-cyan font-bold">Backup Task:</span>
+                <span className="text-cyan animate-pulse font-bold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 bg-cyan rounded-full animate-bounce"></span>
+                  RUNNING
+                </span>
+              </div>
+            )}
           </div>
-        </nav>
+        </div>
       </aside>
 
       {/* 2. Main Content Routing Panels */}
       <main
-        className={`grow flex flex-col py-8 px-10 relative z-5 ${activeView === 'dashboard' ? 'h-full overflow-hidden' : 'overflow-y-auto'}`}
+        className={`grow flex flex-col py-8 px-10 relative z-5 h-full min-h-0 ${activeView === 'dashboard' ? 'overflow-hidden' : 'overflow-y-auto'}`}
       >
         {activeView === 'dashboard' && (
           <DashboardView
@@ -597,6 +740,9 @@ function App() {
             clearLogs={handleClearLogs}
             gitSyncing={gitSyncing}
             handleTriggerGitSync={handleTriggerGitSync}
+            backingUp={backingUp}
+            reloadConfig={loadConfig}
+            onNavigateToSaveTree={handleNavigateToSaveTree}
           />
         )}
 
@@ -622,6 +768,9 @@ function App() {
             handleSaveProfileEdit={handleSaveProfileEdit}
             handleRemoveProfile={handleRemoveProfile}
             handleToggleProfileEnabled={handleToggleProfileEnabled}
+            backingUp={backingUp}
+            reloadConfig={loadConfig}
+            onNavigateToSaveTree={handleNavigateToSaveTree}
           />
         )}
 
@@ -637,6 +786,7 @@ function App() {
             gitTesting={gitTesting}
             handleTestGit={handleTestGit}
             handleSaveGit={handleSaveGit}
+            reloadConfig={loadConfig}
             gitSyncInterval={gitSyncInterval}
             setGitSyncInterval={setGitSyncInterval}
             gitAutoFetch={gitAutoFetch}
@@ -660,6 +810,15 @@ function App() {
 
         {activeView === 'settings' && (
           <SettingsPanel globalConfig={config.global} onSave={handleSaveGeneralSettings} />
+        )}
+
+        {activeView === 'save_tree' && (
+          <SaveTreeView
+            config={config}
+            reloadConfig={loadConfig}
+            initialProfileId={saveTreeInitialProfileId}
+            initialOpenCreate={saveTreeInitialOpenCreate}
+          />
         )}
       </main>
     </div>
@@ -713,5 +872,23 @@ const cleanFolderOrExeName = (name: string): string => {
     .join(' ')
     .trim();
 };
+
+const SaveTreeIcon = ({ className }: { className?: string }) => (
+  <svg
+    className={className}
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    viewBox="0 0 24 24"
+    width="16"
+    height="16"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M12 2v20M12 12H6a3 3 0 01-3-3V7a3 3 0 013-3h6m0 8h6a3 3 0 003 3v2a3 3 0 00-3 3h-6"
+    />
+  </svg>
+);
 
 export default App;

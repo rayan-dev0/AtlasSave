@@ -82,3 +82,18 @@ jobs:
           prerelease: false
           uploadPlainBinary: true
           args: ${{ matrix.args }}
+
+      - name: Compress portable binary
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || steps.check_tag.outputs.tag_exists == 'false'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path src-tauri/target/release/AtlasSave.exe -DestinationPath src-tauri/target/release/AtlasSave-portable-windows-x64.zip
+
+      - name: Upload portable zip to GitHub Release
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || steps.check_tag.outputs.tag_exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.check_tag.outputs.tag_name }}
+          files: src-tauri/target/release/AtlasSave-portable-windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -39,10 +39,12 @@ pub fn run() {
             commands::detect_save_path,
             commands::manual_backup_all,
             commands::test_git_connection,
+            commands::import_remote_git_config,
             commands::toggle_monitoring,
             commands::is_monitoring_active,
             commands::select_directory,
             commands::select_file,
+            commands::select_ssh_key_file,
             commands::fetch_game_cover_art,
             commands::search_game_covers,
             commands::get_backups,
@@ -59,6 +61,16 @@ pub fn run() {
             commands::prune_profile_backups,
             commands::scan_steam_library,
             commands::get_system_storage_stats,
+            commands::get_git_branches,
+            commands::get_git_commits,
+            commands::checkout_git_branch,
+            commands::create_git_branch,
+            commands::restore_git_commit,
+            commands::gc_git_repository,
+            commands::create_save_profile,
+            commands::switch_save_profile,
+            commands::delete_save_profile,
+            commands::rename_save_profile,
         ])
         .setup(|app| {
             let config_manager = config::ConfigManager::new();
@@ -79,7 +91,19 @@ pub fn run() {
                         return;
                     }
 
-                    let name = profile.name.clone();
+                    let active_sp_name = if let Some(active_id) = &profile.active_save_profile_id {
+                        profile
+                            .save_profiles
+                            .iter()
+                            .find(|sp| &sp.id == active_id)
+                            .map(|sp| sp.name.clone())
+                    } else {
+                        None
+                    };
+                    let name = match active_sp_name {
+                        Some(sp_name) => format!("{} - {}", profile.name, sp_name),
+                        None => profile.name.clone(),
+                    };
                     let source_path = std::path::PathBuf::from(&profile.source_path);
                     let backups_dir = config.backups_dir.clone();
                     let max_backups = config.data.global.max_backups;

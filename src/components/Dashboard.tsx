@@ -11,6 +11,9 @@ interface DashboardViewProps {
   clearLogs: () => void;
   gitSyncing: boolean;
   handleTriggerGitSync: () => void;
+  backingUp: boolean;
+  reloadConfig: () => void;
+  onNavigateToSaveTree: (profileId: string, openCreate: boolean) => void;
 }
 
 const parseBackupFilename = (filename: string, profileName: string) => {
@@ -101,6 +104,16 @@ const CircularProgress: React.FC<{ percentage: number; colorClass: string; size?
   );
 };
 
+const PlaythroughIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
+    />
+  </svg>
+);
+
 export const DashboardView: React.FC<DashboardViewProps> = ({
   config,
   monitoringActive,
@@ -110,6 +123,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   clearLogs,
   gitSyncing,
   handleTriggerGitSync,
+  backingUp,
+  reloadConfig,
+  onNavigateToSaveTree,
 }) => {
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(
@@ -301,6 +317,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
+  const handleSwitchPlaythrough = async (spId: string, spName: string) => {
+    if (!selectedProfile) return;
+    const confirm = window.confirm(
+      `Are you sure you want to switch to playthrough "${spName}"? Your current active files will be saved first.`
+    );
+    if (!confirm) return;
+
+    try {
+      await invoke('switch_save_profile', {
+        profileId: selectedProfile.id,
+        targetSpId: spId,
+      });
+      reloadConfig();
+      loadBackups(selectedProfile.id);
+      window.dispatchEvent(new CustomEvent('refresh-backups'));
+    } catch (err) {
+      alert(`Playthrough swap failed: ${err}`);
+    }
+  };
+
   // Auto Scroll Terminal
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -404,23 +440,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
 
           <button
-            className="inline-flex items-center justify-center gap-2 px-3.5 font-sans font-semibold text-[10.5px] rounded-inner cursor-pointer transition-all duration-200 h-[30px] border border-transparent bg-cyan text-[#032021] select-none shadow-[0_2px_8px_rgba(0,242,254,0.15)] hover:not-disabled:bg-[#33f5ff] hover:not-disabled:shadow-[0_0_12px_rgba(0,242,254,0.45)] hover:not-disabled:-translate-y-px active:not-disabled:translate-y-0"
+            className="inline-flex items-center justify-center gap-2 px-3.5 font-sans font-semibold text-[10.5px] rounded-inner cursor-pointer transition-all duration-200 h-[30px] border border-transparent bg-cyan text-[#032021] select-none shadow-[0_2px_8px_rgba(0,242,254,0.15)] disabled:opacity-50 hover:not-disabled:bg-[#33f5ff] hover:not-disabled:shadow-[0_0_12px_rgba(0,242,254,0.45)] hover:not-disabled:-translate-y-px active:not-disabled:translate-y-0"
             onClick={handleManualBackup}
+            disabled={backingUp}
           >
-            <svg
-              style={{ width: 12, height: 12 }}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              strokeWidth="2"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
-              />
-            </svg>
-            BACKUP ALL NOW
+            {backingUp ? (
+              <>
+                <div className="w-2.5 h-2.5 border-2 border-cyan/10 border-t-cyan rounded-full animate-spin"></div>
+                <span>BACKING UP...</span>
+              </>
+            ) : (
+              <>
+                <svg
+                  style={{ width: 12, height: 12 }}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  strokeWidth="2"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
+                  />
+                </svg>
+                <span>BACKUP ALL NOW</span>
+              </>
+            )}
           </button>
         </div>
       </header>
@@ -491,6 +537,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <p className="text-[10px] text-gray">
                       Backups: <span className="text-white">{stats.count}</span>
                     </p>
+                    <p className="text-[10px] text-gray">
+                      Playthrough:{' '}
+                      <span className="text-cyan font-bold truncate block max-w-[130px]">
+                        {profile.save_profiles?.find(
+                          (sp) => sp.id === profile.active_save_profile_id
+                        )?.name || 'Default'}
+                      </span>
+                    </p>
                   </div>
                 </div>
               );
@@ -509,42 +563,96 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {selectedProfile ? (
             <>
               {/* Dropdown Selector Header */}
-              <div className="flex items-center gap-2 bg-bg-inner border border-tech-border rounded-inner p-2.5 px-4 mb-2 shrink-0">
-                <button
-                  className="text-cyan hover:text-white transition-colors cursor-pointer mr-1 font-bold"
-                  onClick={() => {
-                    if (config.profiles.length > 0) {
-                      const idx = config.profiles.findIndex((p) => p.id === selectedProfileId);
-                      const prevIdx = (idx - 1 + config.profiles.length) % config.profiles.length;
-                      setSelectedProfileId(config.profiles[prevIdx].id);
-                    }
-                  }}
-                >
-                  &lt;
-                </button>
-                <div className="flex items-center gap-2 grow relative">
-                  {selectedProfile.cover_url ? (
-                    <img
-                      src={selectedProfile.cover_url}
-                      className="w-5 h-5 rounded-inner object-cover border border-tech-border"
-                      alt=""
-                    />
-                  ) : (
-                    <div className="w-5 h-5 rounded-inner bg-purple/20 border border-tech-border" />
-                  )}
-                  <select
-                    className="grow bg-transparent border-none text-white text-[12.5px] font-bold uppercase tracking-wider outline-none cursor-pointer appearance-none pr-6"
-                    value={selectedProfileId || ''}
-                    onChange={(e) => setSelectedProfileId(e.target.value)}
+              <div className="flex flex-col gap-2 bg-bg-inner border border-tech-border rounded-inner p-2.5 px-4 mb-2 shrink-0">
+                <div className="flex items-center gap-2 w-full">
+                  <button
+                    className="text-cyan hover:text-white transition-colors cursor-pointer mr-1 font-bold"
+                    onClick={() => {
+                      if (config.profiles.length > 0) {
+                        const idx = config.profiles.findIndex((p) => p.id === selectedProfileId);
+                        const prevIdx = (idx - 1 + config.profiles.length) % config.profiles.length;
+                        setSelectedProfileId(config.profiles[prevIdx].id);
+                      }
+                    }}
                   >
-                    {config.profiles.map((p) => (
-                      <option key={p.id} value={p.id} className="bg-bg-dark text-white uppercase">
-                        {p.name}
+                    &lt;
+                  </button>
+                  <div className="flex items-center gap-2 grow relative">
+                    {selectedProfile.cover_url ? (
+                      <img
+                        src={selectedProfile.cover_url}
+                        className="w-5 h-5 rounded-inner object-cover border border-tech-border"
+                        alt=""
+                      />
+                    ) : (
+                      <div className="w-5 h-5 rounded-inner bg-purple/20 border border-tech-border" />
+                    )}
+                    <select
+                      className="grow bg-transparent border-none text-white text-[12.5px] font-bold uppercase tracking-wider outline-none cursor-pointer appearance-none pr-6"
+                      value={selectedProfileId || ''}
+                      onChange={(e) => setSelectedProfileId(e.target.value)}
+                    >
+                      {config.profiles.map((p) => (
+                        <option key={p.id} value={p.id} className="bg-bg-dark text-white uppercase">
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none text-gray">
+                      ▼
+                    </div>
+                  </div>
+                </div>
+
+                {/* Playthrough Select Row */}
+                <div className="flex items-center gap-2 border-t border-tech-border/30 pt-2 w-full">
+                  <div className="text-cyan flex items-center gap-1.5 shrink-0 select-none">
+                    <PlaythroughIcon className="w-3.5 h-3.5 text-cyan" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-gray/85">
+                      PLAYTHROUGH:
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 grow relative">
+                    <select
+                      className="grow bg-transparent border-none text-cyan text-[11.5px] font-bold outline-none cursor-pointer appearance-none pr-6"
+                      value={selectedProfile.active_save_profile_id || ''}
+                      onChange={(e) => {
+                        const targetId = e.target.value;
+                        if (targetId === '__create_new__') {
+                          onNavigateToSaveTree(selectedProfile.id, true);
+                          return;
+                        }
+                        const targetSp = selectedProfile.save_profiles?.find(
+                          (sp) => sp.id === targetId
+                        );
+                        if (targetSp) {
+                          handleSwitchPlaythrough(targetId, targetSp.name);
+                        }
+                      }}
+                    >
+                      {selectedProfile.save_profiles?.map((sp) => (
+                        <option
+                          key={sp.id}
+                          value={sp.id}
+                          className="bg-bg-dark text-cyan font-semibold"
+                        >
+                          {sp.name}
+                        </option>
+                      )) || (
+                        <option value="" className="bg-bg-dark text-cyan font-semibold">
+                          Default
+                        </option>
+                      )}
+                      <option
+                        value="__create_new__"
+                        className="bg-bg-dark text-cyan font-bold border-t border-tech-border/30"
+                      >
+                        + Create New Playthrough...
                       </option>
-                    ))}
-                  </select>
-                  <div className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none text-gray">
-                    ▼
+                    </select>
+                    <div className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none text-cyan">
+                      ▼
+                    </div>
                   </div>
                 </div>
               </div>
