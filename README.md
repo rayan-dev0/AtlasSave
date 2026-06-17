@@ -40,6 +40,21 @@ It watches your game save directories in real-time, compresses them into timesta
 
 ## ![Themes](docs/assets/Settings-2.png)
 
+## 📥 Download & Installation
+
+Get the latest stable release of AtlasSave for Windows:
+
+[![Download for Windows](https://img.shields.io/badge/Download-Windows_x64-0078d7?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/rayan-dev0/AtlasSave/releases)
+
+### Available Formats
+
+- 📦 **Installer (`.msi`)**: Standard Windows installer for a clean setup.
+- 🚀 **Portable (`.exe`)**: Standalone executable that runs instantly without installation.
+
+_For detailed changelogs and historical builds, check the [GitHub Releases](https://github.com/rayan-dev0/AtlasSave/releases) archive._
+
+---
+
 ## 🚀 Key Features
 
 - **Real-Time Active Watcher**: Uses Rust's native `notify` crate to detect save file modifications instantly, debouncing rapid file writes via an unbounded Tokio channel queue.
@@ -162,6 +177,14 @@ On the **Dashboard**, you can check the real-time activity of the watcher.
 - **Manual Sync**: Click **Sync Cloud Now** to pull remote saves from other machines and push your latest local saves in one click.
 - **Backup Now**: Instantly archives the selected game's saves.
 - **Restore points**: Under the game details tab, click **Restore** on any archive row. Enter double-confirmation `YES` to overwrite active saves.
+
+---
+
+## 🗺️ Roadmap & Future TODOs
+
+- [ ] **Linux & Handheld Support**: Native support for Linux and gaming handhelds (e.g., Steam Deck).
+- [ ] **Retro Game Support**: Auto-detection and synchronization for popular retro console emulators.
+- [ ] **CLI Options**: A command-line interface for automated, headless backup scripts.
 
 ---
 
