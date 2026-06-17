@@ -1,4 +1,4 @@
-# 🛡️ AtlasSave
+# 🛡️ AtlasSave — Git for Game Save Files 🎮
 
 [![Release Status](https://img.shields.io/github/v/release/rayan-dev0/AtlasSave?color=00f2fe&label=Version&style=flat-square)](https://github.com/rayan-dev0/AtlasSave/releases)
 [![Stars Counter](https://img.shields.io/github/stars/rayan-dev0/AtlasSave?style=flat-square&color=ffb703&label=Stars)](https://github.com/rayan-dev0/AtlasSave/stargazers)
