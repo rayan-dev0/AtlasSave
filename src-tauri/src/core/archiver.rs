@@ -22,7 +22,10 @@ impl Archiver {
         max_backups: u32,
     ) -> Result<PathBuf, String> {
         if !source_path.exists() {
-            return Err(format!("Source directory does not exist: {:?}", source_path));
+            return Err(format!(
+                "Source directory does not exist: {:?}",
+                source_path
+            ));
         }
 
         let profile_backup_dir = self.backups_root.join(profile_id);
@@ -83,15 +86,13 @@ impl Archiver {
     fn zip_directory(&self, src: &Path, dst: &Path) -> Result<(), io::Error> {
         let file = File::create(dst)?;
         let mut zip = zip::ZipWriter::new(file);
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         for entry in WalkDir::new(src) {
-            let entry = entry.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let entry = entry.map_err(io::Error::other)?;
             let path = entry.path();
-            let name = path
-                .strip_prefix(src)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let name = path.strip_prefix(src).map_err(io::Error::other)?;
 
             if path.is_file() {
                 let name_str = name.to_string_lossy().replace('\\', "/");
@@ -113,7 +114,7 @@ impl Archiver {
             let mut zip_files = Vec::new();
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() && path.extension().map_or(false, |ext| ext == "zip") {
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "zip") {
                     if let Ok(metadata) = entry.metadata() {
                         if let Ok(mtime) = metadata.modified() {
                             zip_files.push((path, mtime));
@@ -127,9 +128,12 @@ impl Archiver {
 
             if zip_files.len() > max_backups as usize {
                 let prune_count = zip_files.len() - max_backups as usize;
-                println!("Archiver: Pruning {} old backup(s) in {:?}", prune_count, dir);
-                for i in 0..prune_count {
-                    let _ = fs::remove_file(&zip_files[i].0);
+                println!(
+                    "Archiver: Pruning {} old backup(s) in {:?}",
+                    prune_count, dir
+                );
+                for file_info in zip_files.iter().take(prune_count) {
+                    let _ = fs::remove_file(&file_info.0);
                 }
             }
         }

@@ -1,11 +1,11 @@
+use crate::config::{Config, Profile};
+use crate::core::archiver::Archiver;
+use crate::core::uploader::{UploadTask, Uploader};
+use crate::utils::detector;
+use crate::AppState;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
-use crate::config::{Config, Profile};
-use crate::core::uploader::{UploadTask, Uploader};
-use crate::core::archiver::Archiver;
-use crate::utils::detector;
-use crate::AppState;
 
 pub fn log_message(app: &AppHandle, message: String) {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -35,20 +35,24 @@ pub fn get_config(state: State<'_, AppState>) -> Config {
 }
 
 #[tauri::command]
-pub fn save_config(app_handle: AppHandle, state: State<'_, AppState>, new_config: Config) -> Result<(), String> {
+pub fn save_config(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    new_config: Config,
+) -> Result<(), String> {
     let mut config = state.config_manager.lock().unwrap();
     config.data = new_config;
     config.save();
-    
+
     // Trigger watcher reload
     let mut watcher = state.watcher.lock().unwrap();
     let is_active = *state.monitoring_active.lock().unwrap();
     if is_active {
         watcher.start(&config.data.profiles);
     }
-    
+
     log_message(&app_handle, "Configuration updated and saved.".to_string());
-    
+
     // Mirror config change to uploader (saving config as a backup item)
     state.uploader.enqueue(UploadTask {
         file_path: config.config_file.clone(),
@@ -75,7 +79,7 @@ pub fn add_profile(
     exe_path: Option<String>,
 ) -> Result<Profile, String> {
     let mut config = state.config_manager.lock().unwrap();
-    
+
     let resolved_path = PathBuf::from(&source_path);
     let absolute_path = resolved_path
         .canonicalize()
@@ -112,6 +116,7 @@ pub fn add_profile(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn update_profile(
     app_handle: AppHandle,
     state: State<'_, AppState>,
@@ -128,14 +133,14 @@ pub fn update_profile(
     for profile in &mut config.data.profiles {
         if profile.id == id {
             profile.name = name.clone();
-            
+
             let resolved_path = PathBuf::from(&source_path);
             profile.source_path = resolved_path
                 .canonicalize()
                 .unwrap_or(resolved_path)
                 .to_string_lossy()
                 .to_string();
-                
+
             profile.enabled = enabled;
             profile.cover_url = cover_url.clone();
             profile.exe_path = exe_path.clone();
@@ -167,7 +172,7 @@ pub fn remove_profile(
 ) -> Result<bool, String> {
     let mut config = state.config_manager.lock().unwrap();
     let original_len = config.data.profiles.len();
-    
+
     config.data.profiles.retain(|p| p.id != id);
 
     if config.data.profiles.len() < original_len {
@@ -202,7 +207,10 @@ pub fn manual_backup_all(app_handle: AppHandle, state: State<'_, AppState>) -> R
         .collect();
 
     if enabled_profiles.is_empty() {
-        log_message(&app_handle, "Manual backup skip: No enabled game profiles.".to_string());
+        log_message(
+            &app_handle,
+            "Manual backup skip: No enabled game profiles.".to_string(),
+        );
         return Ok(());
     }
 
@@ -216,10 +224,13 @@ pub fn manual_backup_all(app_handle: AppHandle, state: State<'_, AppState>) -> R
     tauri::async_runtime::spawn(async move {
         let archiver = Archiver::new(backups_root);
         for profile in enabled_profiles {
-            let name = profile.name.clone();
+            let name = format!("{}_manual", profile.name);
             let source_path = PathBuf::from(&profile.source_path);
-            
-            log_message(&app_handle_clone, format!("Manual backup starting for: {}", name));
+
+            log_message(
+                &app_handle_clone,
+                format!("Manual backup starting for: {}", profile.name),
+            );
             match archiver.archive_profile(&profile.id, &name, &source_path, max_backups) {
                 Ok(zip_path) => {
                     let file_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
@@ -227,9 +238,11 @@ pub fn manual_backup_all(app_handle: AppHandle, state: State<'_, AppState>) -> R
                         let state = app_handle_clone.state::<AppState>();
                         let mut config = state.config_manager.lock().unwrap();
                         config.data.stats.total_backups += 1;
-                        config.data.stats.last_backup_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                        config.data.stats.last_backup_time =
+                            chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                         let mb_size = file_size as f64 / (1024.0 * 1024.0);
-                        config.data.stats.total_size_mb = (config.data.stats.total_size_mb + mb_size * 100.0).round() / 100.0;
+                        config.data.stats.total_size_mb =
+                            (config.data.stats.total_size_mb + mb_size * 100.0).round() / 100.0;
                         config.save();
                     }
 
@@ -242,7 +255,10 @@ pub fn manual_backup_all(app_handle: AppHandle, state: State<'_, AppState>) -> R
                     let _ = app_handle_clone.emit("stats-updated", ());
                 }
                 Err(e) => {
-                    log_message(&app_handle_clone, format!("Manual backup failed for {}: {}", name, e));
+                    log_message(
+                        &app_handle_clone,
+                        format!("Manual backup failed for {}: {}", name, e),
+                    );
                 }
             }
         }
@@ -300,11 +316,14 @@ pub fn select_file() -> Option<String> {
 
 fn fetch_steam_cover_art(game_name: &str) -> Option<String> {
     let encoded = urlencoding::encode(game_name);
-    let url = format!("https://store.steampowered.com/api/storesearch/?term={}&l=english&cc=US", encoded);
-    
+    let url = format!(
+        "https://store.steampowered.com/api/storesearch/?term={}&l=english&cc=US",
+        encoded
+    );
+
     let response = ureq::get(&url).call().ok()?;
     let body: serde_json::Value = response.into_json().ok()?;
-    
+
     if let Some(items) = body.get("items").and_then(|i| i.as_array()) {
         if !items.is_empty() {
             if let Some(appid) = items[0].get("id").and_then(|id| id.as_i64()) {
@@ -317,11 +336,14 @@ fn fetch_steam_cover_art(game_name: &str) -> Option<String> {
 
 fn fetch_gog_cover_art(game_name: &str) -> Option<String> {
     let encoded = urlencoding::encode(game_name);
-    let url = format!("https://embed.gog.com/games/ajax/filtered?mediaType=game&search={}", encoded);
-    
+    let url = format!(
+        "https://embed.gog.com/games/ajax/filtered?mediaType=game&search={}",
+        encoded
+    );
+
     let response = ureq::get(&url).call().ok()?;
     let body: serde_json::Value = response.into_json().ok()?;
-    
+
     if let Some(products) = body.get("products").and_then(|p| p.as_array()) {
         if !products.is_empty() {
             if let Some(img_path) = products[0].get("image").and_then(|i| i.as_str()) {
@@ -348,29 +370,35 @@ fn fetch_epic_cover_art(game_name: &str) -> Option<String> {
             "keywords": game_name
         }
     });
-    
+
     let response = ureq::post("https://graphql.epicgames.com/graphql")
         .send_json(payload)
         .ok()?;
-        
+
     let body: serde_json::Value = response.into_json().ok()?;
-    
-    let elements = body.get("data")?
+
+    let elements = body
+        .get("data")?
         .get("Catalog")?
         .get("searchStore")?
         .get("elements")?
         .as_array()?;
-        
+
     if elements.is_empty() {
         return None;
     }
-    
+
     let key_images = elements[0].get("keyImages")?.as_array()?;
     if key_images.is_empty() {
         return None;
     }
-    
-    let preferred_types = ["OfferImageWide", "DieselGameBoxWide", "Thumbnail", "HorizontalPromo"];
+
+    let preferred_types = [
+        "OfferImageWide",
+        "DieselGameBoxWide",
+        "Thumbnail",
+        "HorizontalPromo",
+    ];
     for pref_type in &preferred_types {
         for img in key_images {
             if let Some(t) = img.get("type").and_then(|t| t.as_str()) {
@@ -382,11 +410,11 @@ fn fetch_epic_cover_art(game_name: &str) -> Option<String> {
             }
         }
     }
-    
+
     if let Some(url) = key_images[0].get("url").and_then(|u| u.as_str()) {
         return Some(url.to_string());
     }
-    
+
     None
 }
 
@@ -410,7 +438,9 @@ fn fetch_cover_art_helper(game_name: &str) -> Option<String> {
 pub fn fetch_game_cover_art(game_name: String) -> Result<String, String> {
     match fetch_cover_art_helper(&game_name) {
         Some(url) => Ok(url),
-        None => Err("No matching game cover art found on Steam, GOG, or Epic Games Store.".to_string()),
+        None => {
+            Err("No matching game cover art found on Steam, GOG, or Epic Games Store.".to_string())
+        }
     }
 }
 
@@ -423,15 +453,22 @@ pub struct CoverSearchResult {
 
 fn search_steam_covers(term: &str) -> Result<Vec<CoverSearchResult>, String> {
     let encoded = urlencoding::encode(term);
-    let url = format!("https://store.steampowered.com/api/storesearch/?term={}&l=english&cc=US", encoded);
-    
+    let url = format!(
+        "https://store.steampowered.com/api/storesearch/?term={}&l=english&cc=US",
+        encoded
+    );
+
     let response = ureq::get(&url).call().map_err(|e| e.to_string())?;
     let body: serde_json::Value = response.into_json().map_err(|e| e.to_string())?;
-    
+
     let mut list = Vec::new();
     if let Some(items) = body.get("items").and_then(|i| i.as_array()) {
         for item in items.iter().take(3) {
-            let title = item.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown").to_string();
+            let title = item
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("Unknown")
+                .to_string();
             if let Some(appid) = item.get("id").and_then(|id| id.as_i64()) {
                 let cover_url = format!("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg", appid);
                 list.push(CoverSearchResult {
@@ -447,15 +484,22 @@ fn search_steam_covers(term: &str) -> Result<Vec<CoverSearchResult>, String> {
 
 fn search_gog_covers(term: &str) -> Result<Vec<CoverSearchResult>, String> {
     let encoded = urlencoding::encode(term);
-    let url = format!("https://embed.gog.com/games/ajax/filtered?mediaType=game&search={}", encoded);
-    
+    let url = format!(
+        "https://embed.gog.com/games/ajax/filtered?mediaType=game&search={}",
+        encoded
+    );
+
     let response = ureq::get(&url).call().map_err(|e| e.to_string())?;
     let body: serde_json::Value = response.into_json().map_err(|e| e.to_string())?;
-    
+
     let mut list = Vec::new();
     if let Some(products) = body.get("products").and_then(|p| p.as_array()) {
         for prod in products.iter().take(3) {
-            let title = prod.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown").to_string();
+            let title = prod
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("Unknown")
+                .to_string();
             if let Some(img_path) = prod.get("image").and_then(|i| i.as_str()) {
                 let clean_path = if img_path.starts_with("//") {
                     format!("https:{}", img_path)
@@ -484,27 +528,37 @@ fn search_epic_covers(term: &str) -> Result<Vec<CoverSearchResult>, String> {
             "keywords": term
         }
     });
-    
+
     let response = ureq::post("https://graphql.epicgames.com/graphql")
         .send_json(payload)
         .map_err(|e| e.to_string())?;
-        
+
     let body: serde_json::Value = response.into_json().map_err(|e| e.to_string())?;
-    
-    let elements = body.get("data")
+
+    let elements = body
+        .get("data")
         .and_then(|d| d.get("Catalog"))
         .and_then(|c| c.get("searchStore"))
         .and_then(|s| s.get("elements"))
         .and_then(|e| e.as_array())
         .ok_or_else(|| "Failed to parse Epic store response".to_string())?;
-        
+
     let mut list = Vec::new();
     for elem in elements.iter().take(3) {
-        let title = elem.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown").to_string();
+        let title = elem
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("Unknown")
+            .to_string();
         if let Some(key_images) = elem.get("keyImages").and_then(|i| i.as_array()) {
             if !key_images.is_empty() {
                 let mut cover_url = None;
-                let preferred_types = ["OfferImageWide", "DieselGameBoxWide", "Thumbnail", "HorizontalPromo"];
+                let preferred_types = [
+                    "OfferImageWide",
+                    "DieselGameBoxWide",
+                    "Thumbnail",
+                    "HorizontalPromo",
+                ];
                 for pref_type in &preferred_types {
                     for img in key_images {
                         if let Some(t) = img.get("type").and_then(|t| t.as_str()) {
@@ -520,11 +574,14 @@ fn search_epic_covers(term: &str) -> Result<Vec<CoverSearchResult>, String> {
                         break;
                     }
                 }
-                
+
                 let final_url = cover_url.or_else(|| {
-                    key_images[0].get("url").and_then(|u| u.as_str()).map(|s| s.to_string())
+                    key_images[0]
+                        .get("url")
+                        .and_then(|u| u.as_str())
+                        .map(|s| s.to_string())
                 });
-                
+
                 if let Some(url) = final_url {
                     list.push(CoverSearchResult {
                         title,
@@ -544,34 +601,44 @@ fn search_steamgrid_covers(api_key: &str, term: &str) -> Result<Vec<CoverSearchR
     }
 
     let encoded = urlencoding::encode(term);
-    let autocomplete_url = format!("https://www.steamgriddb.com/api/v2/search/autocomplete/{}", encoded);
+    let autocomplete_url = format!(
+        "https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
+        encoded
+    );
     let auth_header = format!("Bearer {}", api_key);
-    
+
     // 1. Get game ID from autocomplete
     let response = ureq::get(&autocomplete_url)
         .set("Authorization", &auth_header)
         .call()
         .map_err(|e| e.to_string())?;
-        
+
     let body: serde_json::Value = response.into_json().map_err(|e| e.to_string())?;
-    
-    if !body.get("success").and_then(|s| s.as_bool()).unwrap_or(false) {
+
+    if !body
+        .get("success")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false)
+    {
         return Err("SteamGridDB API search request unsuccessful".to_string());
     }
-    
-    let games = body.get("data")
+
+    let games = body
+        .get("data")
         .and_then(|d| d.as_array())
         .ok_or_else(|| "Failed to parse SteamGridDB autocomplete data".to_string())?;
-        
+
     if games.is_empty() {
         return Ok(Vec::new());
     }
-    
-    let game_id = games[0].get("id")
+
+    let game_id = games[0]
+        .get("id")
         .and_then(|id| id.as_i64())
         .ok_or_else(|| "Failed to parse SteamGridDB game ID".to_string())?;
-        
-    let game_title = games[0].get("name")
+
+    let game_title = games[0]
+        .get("name")
         .and_then(|n| n.as_str())
         .unwrap_or(term)
         .to_string();
@@ -582,17 +649,22 @@ fn search_steamgrid_covers(api_key: &str, term: &str) -> Result<Vec<CoverSearchR
         .set("Authorization", &auth_header)
         .call()
         .map_err(|e| e.to_string())?;
-        
+
     let grid_body: serde_json::Value = grid_response.into_json().map_err(|e| e.to_string())?;
-    
-    if !grid_body.get("success").and_then(|s| s.as_bool()).unwrap_or(false) {
+
+    if !grid_body
+        .get("success")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false)
+    {
         return Err("SteamGridDB Grids request unsuccessful".to_string());
     }
-    
-    let grids = grid_body.get("data")
+
+    let grids = grid_body
+        .get("data")
         .and_then(|d| d.as_array())
         .ok_or_else(|| "Failed to parse SteamGridDB grids data".to_string())?;
-        
+
     let mut list = Vec::new();
     for grid in grids.iter().take(3) {
         if let Some(cover_url) = grid.get("url").and_then(|u| u.as_str()) {
@@ -603,7 +675,7 @@ fn search_steamgrid_covers(api_key: &str, term: &str) -> Result<Vec<CoverSearchR
             });
         }
     }
-    
+
     Ok(list)
 }
 
@@ -653,7 +725,10 @@ pub struct BackupInfo {
 }
 
 #[tauri::command]
-pub fn get_backups(state: State<'_, AppState>, profile_id: String) -> Result<Vec<BackupInfo>, String> {
+pub fn get_backups(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<Vec<BackupInfo>, String> {
     let config = state.config_manager.lock().unwrap();
     let profile_backup_dir = config.backups_dir.join(&profile_id);
 
@@ -665,11 +740,15 @@ pub fn get_backups(state: State<'_, AppState>, profile_id: String) -> Result<Vec
     if let Ok(entries) = std::fs::read_dir(profile_backup_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "zip") {
-                let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "zip") {
+                let filename = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 let metadata = entry.metadata().map_err(|e| e.to_string())?;
                 let size_bytes = metadata.len();
-                
+
                 let modified = metadata.modified().map_err(|e| e.to_string())?;
                 let dt: chrono::DateTime<chrono::Local> = modified.into();
                 let created_at = dt.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -695,17 +774,29 @@ pub fn restore_backup(
     profile_id: String,
     filename: String,
 ) -> Result<(), String> {
-    let (source_path_str, backups_dir) = {
+    let (profile_name, source_path_str, backups_dir, max_backups) = {
         let config = state.config_manager.lock().unwrap();
-        let profile = config.data.profiles.iter().find(|p| p.id == profile_id)
+        let profile = config
+            .data
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
             .ok_or_else(|| "Profile not found".to_string())?;
-        (profile.source_path.clone(), config.backups_dir.clone())
+        (
+            profile.name.clone(),
+            profile.source_path.clone(),
+            config.backups_dir.clone(),
+            config.data.global.max_backups,
+        )
     };
 
     let zip_path = backups_dir.join(&profile_id).join(&filename);
     let source_path = PathBuf::from(&source_path_str);
 
-    log_message(&app_handle, format!("Starting save restore for profile: {}", profile_id));
+    log_message(
+        &app_handle,
+        format!("Starting save restore for profile: {}", profile_id),
+    );
 
     if !zip_path.exists() {
         return Err("Backup archive file does not exist.".to_string());
@@ -713,17 +804,59 @@ pub fn restore_backup(
 
     let app_handle_clone = app_handle.clone();
     tauri::async_runtime::spawn(async move {
+        let archiver = Archiver::new(backups_dir.clone());
+        if source_path.exists() {
+            log_message(
+                &app_handle_clone,
+                format!("Creating rollback backup for: {}", profile_name),
+            );
+            let rollback_name = format!("{}_rollback", profile_name);
+            match archiver.archive_profile(&profile_id, &rollback_name, &source_path, max_backups) {
+                Ok(zip_path) => {
+                    log_message(
+                        &app_handle_clone,
+                        format!("Created permanent rollback backup: {:?}", zip_path),
+                    );
+                    let file_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
+                    {
+                        let state = app_handle_clone.state::<AppState>();
+                        let mut config = state.config_manager.lock().unwrap();
+                        config.data.stats.total_backups += 1;
+                        config.data.stats.last_backup_time =
+                            chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                        let mb_size = file_size as f64 / (1024.0 * 1024.0);
+                        config.data.stats.total_size_mb =
+                            (config.data.stats.total_size_mb + mb_size * 100.0).round() / 100.0;
+                        config.save();
+                    }
+                    let _ = app_handle_clone.emit("stats-updated", ());
+                }
+                Err(e) => {
+                    log_message(
+                        &app_handle_clone,
+                        format!("Failed to create rollback backup: {}", e),
+                    );
+                }
+            }
+        }
+
         let temp_bak_path = source_path.with_extension("restore_bak");
-        
+
         if source_path.exists() {
             if temp_bak_path.exists() {
                 if let Err(e) = std::fs::remove_dir_all(&temp_bak_path) {
-                    log_message(&app_handle_clone, format!("Restore failed (could not clear old temp bak): {}", e));
+                    log_message(
+                        &app_handle_clone,
+                        format!("Restore failed (could not clear old temp bak): {}", e),
+                    );
                     return;
                 }
             }
             if let Err(e) = std::fs::rename(&source_path, &temp_bak_path) {
-                log_message(&app_handle_clone, format!("Restore failed (could not backup existing files): {}", e));
+                log_message(
+                    &app_handle_clone,
+                    format!("Restore failed (could not backup existing files): {}", e),
+                );
                 return;
             }
         }
@@ -759,22 +892,113 @@ pub fn restore_backup(
                 if temp_bak_path.exists() {
                     let _ = std::fs::remove_dir_all(&temp_bak_path);
                 }
-                log_message(&app_handle_clone, format!("[SUCCESS] Restore completed successfully from {}", filename));
+                log_message(
+                    &app_handle_clone,
+                    format!("[SUCCESS] Restore completed successfully from {}", filename),
+                );
                 let _ = app_handle_clone.emit("backups-updated", ());
             }
             Err(err) => {
-                log_message(&app_handle_clone, format!("[ERROR] Restore failed during extraction: {}. Rolling back...", err));
+                log_message(
+                    &app_handle_clone,
+                    format!(
+                        "[ERROR] Restore failed during extraction: {}. Rolling back...",
+                        err
+                    ),
+                );
                 if temp_bak_path.exists() {
                     let _ = std::fs::remove_dir_all(&source_path);
                     if let Err(rollback_err) = std::fs::rename(&temp_bak_path, &source_path) {
-                        log_message(&app_handle_clone, format!("[CRITICAL ERROR] Rollback failed: {}", rollback_err));
+                        log_message(
+                            &app_handle_clone,
+                            format!("[CRITICAL ERROR] Rollback failed: {}", rollback_err),
+                        );
                     } else {
-                        log_message(&app_handle_clone, "Rollback completed. Original files restored.".to_string());
+                        log_message(
+                            &app_handle_clone,
+                            "Rollback completed. Original files restored.".to_string(),
+                        );
                     }
                 }
             }
         }
     });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn rename_backup(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    filename: String,
+    new_label: String,
+) -> Result<(), String> {
+    let backups_dir = {
+        let config = state.config_manager.lock().unwrap();
+        config.backups_dir.clone()
+    };
+
+    let profile_backups_dir = backups_dir.join(&profile_id);
+    let old_path = profile_backups_dir.join(&filename);
+
+    if !old_path.exists() {
+        return Err("Backup file does not exist".to_string());
+    }
+
+    // Sanitize the new label name
+    let safe_label: String = new_label
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_' || *c == '-')
+        .collect::<String>()
+        .trim()
+        .replace(' ', "_");
+
+    if safe_label.is_empty() {
+        return Err("New label is empty or invalid".to_string());
+    }
+
+    let old_name_without_ext = old_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // Check if the old filename ends with a timestamp formatted as _YYYYMMDD_HHMMSS
+    // Timestamp contains 15 chars: _YYYYMMDD_HHMMSS (e.g. _20260617_145710)
+    let timestamp = if old_name_without_ext.len() >= 16 {
+        let suffix = &old_name_without_ext[old_name_without_ext.len() - 15..];
+        let chars: Vec<char> = suffix.chars().collect();
+        if chars[0] == '_'
+            && chars[9] == '_'
+            && chars[1..9].iter().all(|c| c.is_ascii_digit())
+            && chars[10..16].iter().all(|c| c.is_ascii_digit())
+        {
+            suffix.to_string()
+        } else {
+            format!("_{}", chrono::Local::now().format("%Y%m%d_%H%M%S"))
+        }
+    } else {
+        format!("_{}", chrono::Local::now().format("%Y%m%d_%H%M%S"))
+    };
+
+    let new_filename = format!("{}{}.zip", safe_label, timestamp);
+    let new_path = profile_backups_dir.join(&new_filename);
+
+    if new_path.exists() {
+        return Err("A backup with that name/timestamp already exists".to_string());
+    }
+
+    std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+
+    log_message(
+        &app_handle,
+        format!(
+            "[SUCCESS] Backup renamed from {} to {}",
+            filename, new_filename
+        ),
+    );
+    let _ = app_handle.emit("backups-updated", ());
 
     Ok(())
 }
@@ -794,7 +1018,10 @@ pub fn delete_backup(
     let zip_path = backups_dir.join(&profile_id).join(&filename);
     if zip_path.exists() {
         std::fs::remove_file(&zip_path).map_err(|e| e.to_string())?;
-        log_message(&app_handle, format!("[SUCCESS] Backup deleted: {}", filename));
+        log_message(
+            &app_handle,
+            format!("[SUCCESS] Backup deleted: {}", filename),
+        );
         let _ = app_handle.emit("backups-updated", ());
         Ok(())
     } else {
@@ -803,10 +1030,7 @@ pub fn delete_backup(
 }
 
 #[tauri::command]
-pub fn open_backup_directory(
-    state: State<'_, AppState>,
-    profile_id: String,
-) -> Result<(), String> {
+pub fn open_backup_directory(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
     let backups_dir = {
         let config = state.config_manager.lock().unwrap();
         config.backups_dir.join(&profile_id)
@@ -856,10 +1080,13 @@ pub fn manual_backup_profile(
 
     tauri::async_runtime::spawn(async move {
         let archiver = Archiver::new(backups_root);
-        let name = profile.name.clone();
+        let name = format!("{}_manual", profile.name);
         let source_path = PathBuf::from(&profile.source_path);
 
-        log_message(&app_handle_clone, format!("Manual backup starting for: {}", name));
+        log_message(
+            &app_handle_clone,
+            format!("Manual backup starting for: {}", profile.name),
+        );
         match archiver.archive_profile(&profile.id, &name, &source_path, max_backups) {
             Ok(zip_path) => {
                 let file_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
@@ -867,9 +1094,11 @@ pub fn manual_backup_profile(
                     let state = app_handle_clone.state::<AppState>();
                     let mut config = state.config_manager.lock().unwrap();
                     config.data.stats.total_backups += 1;
-                    config.data.stats.last_backup_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                    config.data.stats.last_backup_time =
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                     let mb_size = file_size as f64 / (1024.0 * 1024.0);
-                    config.data.stats.total_size_mb = (config.data.stats.total_size_mb + mb_size * 100.0).round() / 100.0;
+                    config.data.stats.total_size_mb =
+                        (config.data.stats.total_size_mb + mb_size * 100.0).round() / 100.0;
                     config.save();
                 }
 
@@ -881,10 +1110,16 @@ pub fn manual_backup_profile(
 
                 let _ = app_handle_clone.emit("stats-updated", ());
                 let _ = app_handle_clone.emit("backups-updated", ());
-                log_message(&app_handle_clone, format!("[SUCCESS] Manual backup complete for: {}", name));
+                log_message(
+                    &app_handle_clone,
+                    format!("[SUCCESS] Manual backup complete for: {}", name),
+                );
             }
             Err(e) => {
-                log_message(&app_handle_clone, format!("Manual backup failed for {}: {}", name, e));
+                log_message(
+                    &app_handle_clone,
+                    format!("Manual backup failed for {}: {}", name, e),
+                );
             }
         }
     });
@@ -926,7 +1161,10 @@ pub fn clear_log_history(state: State<'_, AppState>) -> Result<(), String> {
 pub fn trigger_git_sync(app_handle: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let (git_dir, backups_dir) = {
         let config = state.config_manager.lock().unwrap();
-        (config.config_dir.join("git_repo"), config.backups_dir.clone())
+        (
+            config.config_dir.join("git_repo"),
+            config.backups_dir.clone(),
+        )
     };
 
     tauri::async_runtime::spawn(async move {
@@ -953,17 +1191,22 @@ fn trigger_backup_for_profile(
         let name = profile.name.clone();
         let source_path = PathBuf::from(&profile.source_path);
 
-        log_message(&app_handle_clone, format!("Post-game auto backup starting for: {}", name));
+        log_message(
+            &app_handle_clone,
+            format!("Post-game auto backup starting for: {}", name),
+        );
         match archiver.archive_profile(&profile.id, &name, &source_path, max_backups) {
             Ok(zip_path) => {
                 {
                     let state = app_handle_clone.state::<AppState>();
                     let mut config = state.config_manager.lock().unwrap();
                     config.data.stats.total_backups += 1;
-                    config.data.stats.last_backup_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                    config.data.stats.last_backup_time =
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                     let file_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
                     let mb_size = file_size as f64 / (1024.0 * 1024.0);
-                    config.data.stats.total_size_mb = (config.data.stats.total_size_mb + mb_size * 100.0).round() / 100.0;
+                    config.data.stats.total_size_mb =
+                        (config.data.stats.total_size_mb + mb_size * 100.0).round() / 100.0;
                     config.save();
                 }
 
@@ -975,10 +1218,16 @@ fn trigger_backup_for_profile(
 
                 let _ = app_handle_clone.emit("stats-updated", ());
                 let _ = app_handle_clone.emit("backups-updated", ());
-                log_message(&app_handle_clone, format!("[SUCCESS] Auto backup complete for: {}", name));
+                log_message(
+                    &app_handle_clone,
+                    format!("[SUCCESS] Auto backup complete for: {}", name),
+                );
             }
             Err(e) => {
-                log_message(&app_handle_clone, format!("Auto backup failed for {}: {}", name, e));
+                log_message(
+                    &app_handle_clone,
+                    format!("Auto backup failed for {}: {}", name, e),
+                );
             }
         }
     });
@@ -991,7 +1240,7 @@ fn is_process_running(process_name: &str) -> bool {
     {
         use std::os::windows::process::CommandExt;
         let mut cmd = std::process::Command::new("tasklist");
-        cmd.args(&["/NH", "/FI", &format!("IMAGENAME eq {}", process_name)]);
+        cmd.args(["/NH", "/FI", &format!("IMAGENAME eq {}", process_name)]);
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         if let Ok(output) = cmd.output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1030,17 +1279,23 @@ pub fn launch_game(
         let mut cmd = std::process::Command::new(&exe_path);
         cmd.current_dir(&exe_dir);
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        cmd.spawn().map_err(|e| format!("Failed to launch game executable: {}", e))?;
+        cmd.spawn()
+            .map_err(|e| format!("Failed to launch game executable: {}", e))?;
     }
 
     // Monitor in background Tokio task
     let app_handle_clone = app_handle.clone();
     let state_clone = app_handle.state::<AppState>();
-    
+
     // De-serialize profile
     let profile = {
         let config = state_clone.config_manager.lock().unwrap();
-        config.data.profiles.iter().find(|p| p.id == profile_id).cloned()
+        config
+            .data
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
     };
 
     if let Some(profile_data) = profile {
@@ -1053,7 +1308,10 @@ pub fn launch_game(
             }
             log_message(
                 &app_handle_clone,
-                format!("Game Launched: {}. Pausing file system watcher for profile.", profile_data.name),
+                format!(
+                    "Game Launched: {}. Pausing file system watcher for profile.",
+                    profile_data.name
+                ),
             );
 
             // Wait a few seconds for game process to appear
@@ -1070,7 +1328,10 @@ pub fn launch_game(
             // 3. Exited! Resume watcher and backup
             log_message(
                 &app_handle_clone,
-                format!("Game Exited: {}. Resuming watcher and triggering backup.", profile_data.name),
+                format!(
+                    "Game Exited: {}. Resuming watcher and triggering backup.",
+                    profile_data.name
+                ),
             );
 
             {
@@ -1114,7 +1375,7 @@ pub fn get_profile_storage_stats(
         if let Ok(entries) = std::fs::read_dir(backups_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() && path.extension().map_or(false, |ext| ext == "zip") {
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "zip") {
                     backup_count += 1;
                     if let Ok(meta) = path.metadata() {
                         total_size_bytes += meta.len();
@@ -1162,7 +1423,7 @@ pub fn prune_profile_backups(
     if let Ok(entries) = std::fs::read_dir(&backups_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "zip") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "zip") {
                 if let Ok(meta) = path.metadata() {
                     if let Ok(modified) = meta.modified() {
                         zip_files.push((path, modified));
@@ -1173,12 +1434,12 @@ pub fn prune_profile_backups(
     }
 
     // Sort by modified time descending (newest first)
-    zip_files.sort_by(|a, b| b.1.cmp(&a.1));
+    zip_files.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     let mut deleted_count = 0;
     if zip_files.len() > keep_count {
         for (path, _) in &zip_files[keep_count..] {
-            if let Ok(_) = std::fs::remove_file(path) {
+            if std::fs::remove_file(path).is_ok() {
                 deleted_count += 1;
             }
         }
@@ -1186,7 +1447,10 @@ pub fn prune_profile_backups(
 
     log_message(
         &app_handle,
-        format!("Pruned {} older backup files for profile {}.", deleted_count, profile_id),
+        format!(
+            "Pruned {} older backup files for profile {}.",
+            deleted_count, profile_id
+        ),
     );
 
     let _ = app_handle.emit("backups-updated", ());
@@ -1205,7 +1469,8 @@ pub fn scan_steam_library() -> Result<Vec<DetectedGame>, String> {
     let mut detected_games = Vec::new();
 
     // 1. Get Steam installation path
-    let program_files_86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
+    let program_files_86 = std::env::var("ProgramFiles(x86)")
+        .unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
     let default_steam_dir = std::path::PathBuf::from(&program_files_86).join("Steam");
     let mut steam_dirs = vec![default_steam_dir];
 
@@ -1229,7 +1494,7 @@ pub fn scan_steam_library() -> Result<Vec<DetectedGame>, String> {
     for steam_dir in &steam_dirs {
         if steam_dir.exists() {
             library_paths.push(steam_dir.clone());
-            
+
             // Read libraryfolders.vdf
             let lib_vdf = steam_dir.join("steamapps").join("libraryfolders.vdf");
             if lib_vdf.exists() {
@@ -1268,7 +1533,7 @@ pub fn scan_steam_library() -> Result<Vec<DetectedGame>, String> {
                                 // Try auto-detection
                                 let suggestion = detector::detect_save_directory(exe.clone())
                                     .map(|p| p.to_string_lossy().to_string());
-                                
+
                                 detected_games.push(DetectedGame {
                                     name: game_name.to_string(),
                                     exe_path: exe.to_string_lossy().to_string(),
@@ -1287,7 +1552,7 @@ pub fn scan_steam_library() -> Result<Vec<DetectedGame>, String> {
 
 fn find_game_executables(game_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut exes = Vec::new();
-    
+
     // Look for executables in main dir and Binaries/Win64
     let paths_to_check = vec![
         game_dir.to_path_buf(),
@@ -1301,16 +1566,16 @@ fn find_game_executables(game_dir: &std::path::Path) -> Vec<std::path::PathBuf> 
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.is_file() && path.extension().map_or(false, |ext| ext == "exe") {
+                    if path.is_file() && path.extension().is_some_and(|ext| ext == "exe") {
                         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                             let lower = name.to_lowercase();
                             // Skip installers, webview helpers, steam_helper, crash reporter
-                            if !lower.contains("crash") 
-                                && !lower.contains("unity") 
-                                && !lower.contains("cef") 
-                                && !lower.contains("helper") 
-                                && !lower.contains("install") 
-                                && !lower.contains("setup") 
+                            if !lower.contains("crash")
+                                && !lower.contains("unity")
+                                && !lower.contains("cef")
+                                && !lower.contains("helper")
+                                && !lower.contains("install")
+                                && !lower.contains("setup")
                                 && !lower.contains("config")
                             {
                                 exes.push(path);
@@ -1335,3 +1600,142 @@ fn find_game_executables(game_dir: &std::path::Path) -> Vec<std::path::PathBuf> 
     exes
 }
 
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn GetDiskFreeSpaceExW(
+        lpDirectoryName: *const u16,
+        lpFreeBytesAvailableToCaller: *mut u64,
+        lpTotalNumberOfBytes: *mut u64,
+        lpTotalNumberOfFreeBytes: *mut u64,
+    ) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+fn get_disk_space_info<P: AsRef<std::path::Path>>(path: P) -> Option<(u64, u64)> {
+    use std::os::windows::ffi::OsStrExt;
+    let path = path.as_ref();
+    let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide_path.push(0);
+
+    let mut free_bytes = 0u64;
+    let mut total_bytes = 0u64;
+    let mut total_free_bytes = 0u64;
+
+    unsafe {
+        let res = GetDiskFreeSpaceExW(
+            wide_path.as_ptr(),
+            &mut free_bytes,
+            &mut total_bytes,
+            &mut total_free_bytes,
+        );
+        if res != 0 {
+            Some((total_bytes, free_bytes))
+        } else {
+            if let Some(parent) = path.parent() {
+                let mut wide_parent: Vec<u16> = parent.as_os_str().encode_wide().collect();
+                wide_parent.push(0);
+                let res = GetDiskFreeSpaceExW(
+                    wide_parent.as_ptr(),
+                    &mut free_bytes,
+                    &mut total_bytes,
+                    &mut total_free_bytes,
+                );
+                if res != 0 {
+                    return Some((total_bytes, free_bytes));
+                }
+            }
+            None
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_disk_space_info<P: AsRef<std::path::Path>>(_path: P) -> Option<(u64, u64)> {
+    Some((512 * 1024 * 1024 * 1024, 256 * 1024 * 1024 * 1024))
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct SystemStorageStats {
+    pub primary_total_gb: f64,
+    pub primary_used_gb: f64,
+    pub primary_free_gb: f64,
+    pub primary_percent: f64,
+
+    pub cloud_total_gb: f64,
+    pub cloud_used_gb: f64,
+    pub cloud_free_gb: f64,
+    pub cloud_percent: f64,
+}
+
+#[tauri::command]
+pub fn get_system_storage_stats(state: State<'_, AppState>) -> Result<SystemStorageStats, String> {
+    let (backups_dir, providers, total_size_mb) = {
+        let config = state.config_manager.lock().unwrap();
+        (
+            config.backups_dir.clone(),
+            config.data.providers.clone(),
+            config.data.stats.total_size_mb,
+        )
+    };
+
+    // 1. Primary Disk Space Info
+    let mut primary_total_gb = 128.0;
+    let mut primary_free_gb = 43.8;
+    let mut primary_used_gb = 84.2;
+    let mut primary_percent = 65.0;
+
+    if let Some((total_bytes, free_bytes)) = get_disk_space_info(&backups_dir) {
+        primary_total_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        primary_free_gb = free_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        primary_used_gb = primary_total_gb - primary_free_gb;
+        primary_percent = if primary_total_gb > 0.0 {
+            (primary_used_gb / primary_total_gb * 100.0).clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
+    }
+
+    // 2. Cloud Disk Space Info
+    let mut cloud_total_gb = 256.0;
+    let mut cloud_free_gb = 256.0;
+    let mut cloud_used_gb = 0.0;
+    let mut cloud_percent = 0.0;
+
+    if providers.local_backup.enabled {
+        let dest_path = std::path::PathBuf::from(&providers.local_backup.destination_path);
+        if dest_path.exists() {
+            if let Some((total_bytes, free_bytes)) = get_disk_space_info(&dest_path) {
+                cloud_total_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                cloud_free_gb = free_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                cloud_used_gb = cloud_total_gb - cloud_free_gb;
+                cloud_percent = if cloud_total_gb > 0.0 {
+                    (cloud_used_gb / cloud_total_gb * 100.0).clamp(0.0, 100.0)
+                } else {
+                    0.0
+                };
+            }
+        }
+    } else if providers.git.enabled {
+        // Mock a 5 GB storage limit for Git repository
+        cloud_total_gb = 5.0;
+        cloud_used_gb = total_size_mb / 1024.0;
+        cloud_free_gb = (cloud_total_gb - cloud_used_gb).max(0.0);
+        cloud_percent = if cloud_total_gb > 0.0 {
+            (cloud_used_gb / cloud_total_gb * 100.0).clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
+    }
+
+    Ok(SystemStorageStats {
+        primary_total_gb: (primary_total_gb * 10.0).round() / 10.0,
+        primary_used_gb: (primary_used_gb * 10.0).round() / 10.0,
+        primary_free_gb: (primary_free_gb * 10.0).round() / 10.0,
+        primary_percent: primary_percent.round(),
+
+        cloud_total_gb: (cloud_total_gb * 10.0).round() / 10.0,
+        cloud_used_gb: (cloud_used_gb * 10.0).round() / 10.0,
+        cloud_free_gb: (cloud_free_gb * 10.0).round() / 10.0,
+        cloud_percent: cloud_percent.round(),
+    })
+}

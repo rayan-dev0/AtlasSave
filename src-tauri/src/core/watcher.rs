@@ -1,8 +1,8 @@
+use crate::config::Profile;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use crate::config::Profile;
 
 pub type WatcherCallback = Arc<dyn Fn(String) + Send + Sync + 'static>;
 
@@ -75,8 +75,11 @@ impl SaveWatcher {
                 continue;
             }
 
-            if let Ok(_) = watcher.watch(path, RecursiveMode::Recursive) {
-                self.active_watches.lock().unwrap().insert(profile.id.clone(), profile.source_path.clone());
+            if watcher.watch(path, RecursiveMode::Recursive).is_ok() {
+                self.active_watches
+                    .lock()
+                    .unwrap()
+                    .insert(profile.id.clone(), profile.source_path.clone());
                 watch_count += 1;
             } else {
                 eprintln!("Failed to watch path: {:?}", path);
@@ -85,7 +88,10 @@ impl SaveWatcher {
 
         if watch_count > 0 {
             self.watcher = Some(watcher);
-            println!("SaveWatcher: Started monitoring {} profile(s).", watch_count);
+            println!(
+                "SaveWatcher: Started monitoring {} profile(s).",
+                watch_count
+            );
         } else {
             println!("SaveWatcher: No active folders to monitor.");
         }
@@ -97,7 +103,10 @@ impl SaveWatcher {
             if let Some(path_str) = watches.remove(profile_id) {
                 let path = Path::new(&path_str);
                 let _ = watcher.unwatch(path);
-                println!("SaveWatcher: Temporarily paused monitoring for profile {}", profile_id);
+                println!(
+                    "SaveWatcher: Temporarily paused monitoring for profile {}",
+                    profile_id
+                );
             }
         }
     }
@@ -105,11 +114,12 @@ impl SaveWatcher {
     pub fn start_watching_profile(&mut self, profile: &Profile) {
         if let Some(ref mut watcher) = self.watcher {
             let path = Path::new(&profile.source_path);
-            if path.exists() {
-                if let Ok(_) = watcher.watch(path, RecursiveMode::Recursive) {
-                    self.active_watches.lock().unwrap().insert(profile.id.clone(), profile.source_path.clone());
-                    println!("SaveWatcher: Resumed monitoring for profile {}", profile.id);
-                }
+            if path.exists() && watcher.watch(path, RecursiveMode::Recursive).is_ok() {
+                self.active_watches
+                    .lock()
+                    .unwrap()
+                    .insert(profile.id.clone(), profile.source_path.clone());
+                println!("SaveWatcher: Resumed monitoring for profile {}", profile.id);
             }
         }
     }

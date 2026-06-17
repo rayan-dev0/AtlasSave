@@ -36,8 +36,12 @@ pub struct LocalBackupProvider {
     pub destination_path: String,
 }
 
-fn default_sync_interval() -> u32 { 15 }
-fn default_true() -> bool { true }
+fn default_sync_interval() -> u32 {
+    15
+}
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GitProvider {

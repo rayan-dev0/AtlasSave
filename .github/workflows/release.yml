@@ -52,4 +52,5 @@ jobs:
           releaseBody: 'AtlasSave Desktop Application Release ${{ github.ref_name }}'
           releaseDraft: true
           prerelease: false
+          uploadPlainBinary: true
           args: ${{ matrix.args }}
