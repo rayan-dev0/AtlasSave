@@ -86,7 +86,7 @@ jobs:
           releaseBody: 'AtlasSave Desktop Application Release ${{ steps.check_tag.outputs.tag_name }}'
           releaseDraft: true
           prerelease: false
-          uploadPlainBinary: true
+          uploadPlainBinary: false
           args: ${{ matrix.args }}
 
       - name: Compress portable binary
