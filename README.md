@@ -84,21 +84,32 @@ AtlasSave supports two backup destinations, which can both be enabled simultaneo
 
 To sync your saves to a private Git repository, choose one of the following authentication routes:
 
-#### Option 1: HTTPS Authentication (Personal Access Tokens)
+#### Option 1: HTTPS Authentication (Personal Access Tokens - Recommended)
 
-1. Create a **Private** repository on GitHub (you can name it anything you want, e.g. `game-saves` or `my-saves`). Do _not_ make it public.
-2. Navigate to your GitHub settings page &rarr; Developer Settings &rarr; **Personal Access Tokens (Tokens classic)**.
-3. Generate a new token with **`repo`** scopes. Copy this token.
-4. Format your repository URL as (replacing `game-saves.git` with whatever repository name you chose):
-   ```text
-   https://<your_username>:<your_token>@github.com/<your_username>/<your_repo_name>.git
-   ```
-5. Paste this URL into the **Repository URL** field in AtlasSave, set your branch name (e.g. `main`), and save.
+We recommend using **Fine-grained Personal Access Tokens** because they can be restricted to a single repository:
+
+1. Create a **Private** repository on GitHub (you can name it anything you want, e.g. `game-saves`). Do _not_ make it public.
+2. Go to your GitHub settings page &rarr; Developer Settings &rarr; **Personal Access Tokens** &rarr; **Fine-grained tokens**.
+3. Generate a new token:
+   - **Repository access**: Choose **Only select repositories** and select your saves repository.
+   - **Repository permissions**: Under **Contents**, select **Read and Write** access.
+4. Copy the generated token.
+5. In AtlasSave:
+   - **Interactive Method**: Choose **Split Fields**, set the protocol to **HTTPS**, fill in your repository details, and paste the token in the **Personal Access Token (PAT)** field.
+   - **Raw URL Method**: Paste the formatted URL into the URL field:
+     ```text
+     https://oauth2:<your_token>@github.com/<your_username>/<your_repo_name>.git
+     ```
+
+> [!NOTE]
+> If you prefer using classic Personal Access Tokens (account-scoped), you can generate a token under **Tokens (classic)** with the full **`repo`** scope and format the URL as `https://<your_username>:<your_token>@github.com/<your_username>/<your_repo_name>.git`.
 
 #### Option 2: SSH Authentication (Key-based)
 
 1. Set up an SSH keypair on your machine (e.g. `ssh-keygen -t ed25519 -C "atlassave"`).
-2. Register the public key (`.pub`) in your GitHub Profile settings under **SSH and GPG keys**.
+2. Register the public key (`.pub`) either globally in your GitHub Profile settings under **SSH and GPG keys**, or as a **Deploy Key** on your specific saves repository (recommended for single-repo-scoped security):
+   - Go to your saves repository settings on GitHub &rarr; **Deploy keys**.
+   - Click **Add deploy key**, paste your public key, and check **Allow write access**.
 3. Use your Git SSH URL format (replacing `game-saves.git` with your custom repository name):
    ```text
    git@github.com:<your_username>/<your_repo_name>.git
