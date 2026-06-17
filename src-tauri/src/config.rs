@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GlobalConfig {
@@ -19,6 +20,13 @@ pub struct StatsConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SaveProfile {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Profile {
     pub id: String,
     pub name: String,
@@ -28,6 +36,10 @@ pub struct Profile {
     pub cover_url: Option<String>,
     #[serde(default)]
     pub exe_path: Option<String>,
+    #[serde(default)]
+    pub save_profiles: Vec<SaveProfile>,
+    #[serde(default)]
+    pub active_save_profile_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -155,8 +167,29 @@ impl ConfigManager {
     pub fn load(&mut self) {
         if self.config_file.exists() {
             if let Ok(content) = fs::read_to_string(&self.config_file) {
-                if let Ok(loaded_data) = serde_json::from_str::<Config>(&content) {
+                if let Ok(mut loaded_data) = serde_json::from_str::<Config>(&content) {
+                    let mut modified = false;
+                    for p in &mut loaded_data.profiles {
+                        if p.save_profiles.is_empty() {
+                            let default_id = Uuid::new_v4().to_string();
+                            p.save_profiles.push(SaveProfile {
+                                id: default_id.clone(),
+                                name: "Default Profile".to_string(),
+                                created_at: chrono::Local::now()
+                                    .format("%Y-%m-%d %H:%M:%S")
+                                    .to_string(),
+                            });
+                            p.active_save_profile_id = Some(default_id);
+                            modified = true;
+                        } else if p.active_save_profile_id.is_none() {
+                            p.active_save_profile_id = Some(p.save_profiles[0].id.clone());
+                            modified = true;
+                        }
+                    }
                     self.data = loaded_data;
+                    if modified {
+                        self.save();
+                    }
                     return;
                 }
             }

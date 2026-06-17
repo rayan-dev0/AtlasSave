@@ -65,7 +65,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
 
   return (
     <div className="flex flex-col justify-center items-center h-screen w-screen bg-bg-dark p-10 relative overflow-hidden">
-      <div className="w-full max-w-[620px] bg-bg-card backdrop-blur-[20px] border border-tech-border rounded-card p-10 shadow-[0_15px_50px_rgba(0,0,0,0.6)] flex flex-col items-center gap-6 relative overflow-hidden">
+      <div className="w-full max-w-[620px] max-h-[calc(100vh-80px)] bg-bg-card backdrop-blur-[20px] border border-tech-border rounded-card p-10 shadow-[0_15px_50px_rgba(0,0,0,0.6)] flex flex-col items-center gap-6 relative overflow-y-auto scrollbar">
         {/* Top Gradient Accent Line */}
         <span className="absolute top-0 left-0 right-0 h-[4px] bg-gradient-to-r from-cyan to-purple opacity-100 z-10" />
 

@@ -9,6 +9,16 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+struct GitSyncGuard<'a> {
+    app_handle: &'a AppHandle,
+}
+
+impl<'a> Drop for GitSyncGuard<'a> {
+    fn drop(&mut self) {
+        let _ = self.app_handle.emit("git-sync-status", "idle");
+    }
+}
+
 pub struct UploadTask {
     pub file_path: PathBuf,
     pub profile_name: String,
@@ -20,7 +30,7 @@ pub struct Uploader {
     sender: UnboundedSender<UploadTask>,
 }
 
-fn sanitize_profile_name(name: &str) -> String {
+pub fn sanitize_profile_name(name: &str) -> String {
     name.chars()
         .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_' || *c == '-')
         .collect::<String>()
@@ -121,6 +131,21 @@ impl Uploader {
                                 &app_handle,
                                 format!("Local Git stage successful: {}", file_name),
                             );
+
+                            // Prune older files in the git working directory to prevent working tree bloat
+                            let max_backups = {
+                                if let Some(state) = app_handle.try_state::<AppState>() {
+                                    if let Ok(config) = state.config_manager.lock() {
+                                        config.data.global.max_backups
+                                    } else {
+                                        10
+                                    }
+                                } else {
+                                    10
+                                }
+                            };
+                            Self::prune_git_backups(&dest_dir, max_backups);
+
                             // If sync interval is set to 0 (Real-time), trigger sync immediately
                             if task.providers.git.sync_interval_mins == 0 {
                                 let backups_dir = git_dir.parent().unwrap().join("backups");
@@ -200,7 +225,7 @@ impl Uploader {
         }
     }
 
-    fn ensure_git_repo_init(
+    pub fn ensure_git_repo_init(
         app_handle: &AppHandle,
         git_dir: &Path,
         git_config: &crate::config::GitProvider,
@@ -279,6 +304,9 @@ impl Uploader {
         if !git_config.enabled || git_config.repo_url.is_empty() {
             return Ok(());
         }
+
+        let _ = app_handle.emit("git-sync-status", "running");
+        let _guard = GitSyncGuard { app_handle };
 
         Self::log(app_handle, "Starting full Git sync...".to_string());
 
@@ -393,10 +421,10 @@ impl Uploader {
         git_dir: &Path,
         backups_dir: &Path,
     ) -> Result<(), String> {
-        let profiles = {
+        let (profiles, max_backups) = {
             if let Some(state) = app_handle.try_state::<AppState>() {
                 if let Ok(config) = state.config_manager.lock() {
-                    config.data.profiles.clone()
+                    (config.data.profiles.clone(), config.data.global.max_backups)
                 } else {
                     return Err("Failed to lock config".to_string());
                 }
@@ -413,7 +441,7 @@ impl Uploader {
                 let profile_backups_dir = backups_dir.join(&profile.id);
                 std::fs::create_dir_all(&profile_backups_dir).map_err(|e| e.to_string())?;
 
-                if let Ok(entries) = std::fs::read_dir(profile_git_dir) {
+                if let Ok(entries) = std::fs::read_dir(&profile_git_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.is_file() && path.extension().is_some_and(|ext| ext == "zip") {
@@ -432,12 +460,42 @@ impl Uploader {
                         }
                     }
                 }
+
+                // Prune both staging directory and local backups directory
+                Self::prune_git_backups(&profile_git_dir, max_backups);
+                Self::prune_git_backups(&profile_backups_dir, max_backups);
             }
         }
         Ok(())
     }
 
-    fn run_git_cmd(git_dir: &Path, args: &[&str]) -> Result<String, String> {
+    pub fn prune_git_backups(dir: &Path, max_backups: u32) {
+        if let Ok(entries) = fs::read_dir(dir) {
+            let mut zip_files = Vec::new();
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "zip") {
+                    if let Ok(metadata) = entry.metadata() {
+                        if let Ok(mtime) = metadata.modified() {
+                            zip_files.push((path, mtime));
+                        }
+                    }
+                }
+            }
+
+            // Sort by modification time (oldest first)
+            zip_files.sort_by_key(|k| k.1);
+
+            if zip_files.len() > max_backups as usize {
+                let prune_count = zip_files.len() - max_backups as usize;
+                for file_info in zip_files.iter().take(prune_count) {
+                    let _ = fs::remove_file(&file_info.0);
+                }
+            }
+        }
+    }
+
+    pub fn run_git_cmd(git_dir: &Path, args: &[&str]) -> Result<String, String> {
         let mut cmd = Command::new("git");
         cmd.args(args).current_dir(git_dir);
 

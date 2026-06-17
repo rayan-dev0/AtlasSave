@@ -11,6 +11,12 @@ export interface StatsConfig {
   total_size_mb: number;
 }
 
+export interface SaveProfile {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
 export interface Profile {
   id: string;
   name: string;
@@ -18,6 +24,8 @@ export interface Profile {
   enabled: boolean;
   cover_url?: string | null;
   exe_path?: string | null;
+  save_profiles?: SaveProfile[];
+  active_save_profile_id?: string | null;
 }
 
 export interface LocalBackupProvider {
