@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -25,6 +27,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,14 +46,38 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Determine tag name and check existence
+        id: check_tag
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG_NAME="${{ github.ref_name }}"
+            TAG_EXISTS="true"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            TAG_NAME="v$VERSION"
+            
+            git fetch --tags
+            if git rev-parse "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
+              echo "Tag $TAG_NAME already exists. Skipping build."
+              TAG_EXISTS="true"
+            else
+              echo "Tag $TAG_NAME does not exist. Proceeding with release build."
+              TAG_EXISTS="false"
+            fi
+          fi
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "tag_exists=$TAG_EXISTS" >> $GITHUB_OUTPUT
+
       - name: Build and Publish Tauri app
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || steps.check_tag.outputs.tag_exists == 'false'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'AtlasSave ${{ github.ref_name }}'
-          releaseBody: 'AtlasSave Desktop Application Release ${{ github.ref_name }}'
+          tagName: ${{ steps.check_tag.outputs.tag_name }}
+          releaseName: 'AtlasSave ${{ steps.check_tag.outputs.tag_name }}'
+          releaseBody: 'AtlasSave Desktop Application Release ${{ steps.check_tag.outputs.tag_name }}'
           releaseDraft: true
           prerelease: false
           uploadPlainBinary: true
