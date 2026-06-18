@@ -16,7 +16,8 @@
         "width": 960,
         "height": 640,
         "minWidth": 900,
-        "minHeight": 580
+        "minHeight": 580,
+        "center": true
       }
     ],
     "security": {
@@ -33,5 +34,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW51c2VkX21vY2tfcHVia2V5X3BsYWNlaG9sZGVyX2Zvcl9kZXZlbG9wbWVudAo=",
+      "endpoints": [
+        "https://raw.githubusercontent.com/rayan-dev0/AtlasSave/main/updater-manifest.json"
+      ]
+    }
   }
 }

@@ -23,12 +23,15 @@ pub struct AppState {
     pub debouncer: core::debouncer::Debouncer,
     pub uploader: core::uploader::Uploader,
     pub monitoring_active: std::sync::Mutex<bool>,
+    pub config_dir: std::path::PathBuf,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
@@ -40,6 +43,7 @@ pub fn run() {
             commands::manual_backup_all,
             commands::test_git_connection,
             commands::import_remote_git_config,
+            commands::import_local_backup_config,
             commands::toggle_monitoring,
             commands::is_monitoring_active,
             commands::select_directory,
@@ -77,7 +81,7 @@ pub fn run() {
             let config_dir = config_manager.config_dir.clone();
 
             let app_handle = app.handle().clone();
-            let uploader = core::uploader::Uploader::new(app_handle.clone(), config_dir);
+            let uploader = core::uploader::Uploader::new(app_handle.clone(), config_dir.clone());
 
             // 1. Setup debouncer callback (triggers zip archival & cloud sync)
             let app_handle_clone1 = app_handle.clone();
@@ -184,6 +188,7 @@ pub fn run() {
                 debouncer,
                 uploader,
                 monitoring_active: std::sync::Mutex::new(true),
+                config_dir,
             });
 
             // 3. System Tray configurations

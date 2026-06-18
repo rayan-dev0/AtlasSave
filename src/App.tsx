@@ -51,7 +51,7 @@ function App() {
 
   // Onboarding Step State
   const [onboardingStep, setOnboardingStep] = useState<
-    'welcome' | 'providers' | 'settings' | 'ready'
+    'welcome' | 'profile' | 'providers' | 'settings' | 'ready'
   >('welcome');
 
   // Forms states
@@ -366,14 +366,17 @@ function App() {
   // Onboarding Wizard - Complete & Finalize
   const handleCompleteOnboarding = async () => {
     try {
+      // Fetch latest configuration from backend to preserve any imported profiles
+      const currentConfig: Config = await invoke('get_config');
+
       // 1. Prepare and save config
       const updated = {
-        ...config,
+        ...currentConfig,
         global: {
           run_on_startup: onboardStartup,
           max_backups: onboardMaxBackups,
           debounce_seconds: onboardDebounce,
-          steamgriddb_api_key: config.global.steamgriddb_api_key || '',
+          steamgriddb_api_key: currentConfig.global.steamgriddb_api_key || '',
         },
         providers: {
           local_backup: {
@@ -529,6 +532,29 @@ function App() {
         onboardStartup={onboardStartup}
         setOnboardStartup={setOnboardStartup}
         handleCompleteOnboarding={handleCompleteOnboarding}
+        gitUserName={gitUserName}
+        setGitUserName={setGitUserName}
+        gitUserEmail={gitUserEmail}
+        setGitUserEmail={setGitUserEmail}
+        gitSshKeyPath={gitSshKeyPath}
+        setGitSshKeyPath={setGitSshKeyPath}
+        gitAcceptNewHosts={gitAcceptNewHosts}
+        setAcceptNewHosts={setAcceptNewHosts}
+        gitSyncInterval={gitSyncInterval}
+        setGitSyncInterval={setGitSyncInterval}
+        gitAutoFetch={gitAutoFetch}
+        setGitAutoFetch={setGitAutoFetch}
+        newProfileName={newProfileName}
+        setNewProfileName={setNewProfileName}
+        newProfilePath={newProfilePath}
+        setNewProfilePath={setNewProfilePath}
+        gameExePath={gameExePath}
+        setGameExePath={setGameExePath}
+        detecting={detecting}
+        detectionMessage={detectionMessage}
+        handleBrowseFileAndDetect={handleBrowseFileAndDetect}
+        loadConfig={loadConfig}
+        appendLocalLog={appendLocalLog}
       />
     );
   }
