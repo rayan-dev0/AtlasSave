@@ -901,7 +901,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ globalConfig, onSa
                     </span>
 
                     <span className="font-mono text-[10px] bg-cyan text-bg-dark px-3 py-0.5 rounded-full font-bold tracking-[0.5px] mt-2.5 shadow-sm">
-                      v0.2.0-STABLE
+                      v0.3.0-STABLE
                     </span>
                   </div>
 
@@ -921,7 +921,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ globalConfig, onSa
                         <span className="text-[11px] font-semibold text-white">
                           Current Version
                         </span>
-                        <span className="font-mono text-xs text-gray">v0.2.0-STABLE</span>
+                        <span className="font-mono text-xs text-gray">v0.3.0-STABLE</span>
                       </div>
 
                       <div className="flex items-center gap-3">
