@@ -24,16 +24,14 @@ pub fn log_message(app: &AppHandle, message: String) {
     let _ = app.emit("log-event", formatted.clone());
 
     if let Some(state) = app.try_state::<AppState>() {
-        if let Ok(config) = state.config_manager.lock() {
-            let log_file_path = config.config_dir.join("atlas_save.log");
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_file_path)
-            {
-                use std::io::Write;
-                let _ = writeln!(file, "{}", formatted);
-            }
+        let log_file_path = state.config_dir.join("atlas_save.log");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file_path)
+        {
+            use std::io::Write;
+            let _ = writeln!(file, "{}", formatted);
         }
     }
 }
@@ -304,12 +302,12 @@ pub fn manual_backup_all(app_handle: AppHandle, state: State<'_, AppState>) -> R
 }
 
 #[tauri::command]
-pub fn test_git_connection(repo_url: String) -> Result<String, String> {
+pub async fn test_git_connection(repo_url: String) -> Result<String, String> {
     Uploader::test_git_connection(&repo_url)
 }
 
 #[tauri::command]
-pub fn import_remote_git_config(
+pub async fn import_remote_git_config(
     app_handle: AppHandle,
     state: State<'_, AppState>,
     git_config: crate::config::GitProvider,
@@ -685,14 +683,246 @@ pub fn import_remote_git_config(
 }
 
 #[tauri::command]
+pub async fn import_local_backup_config(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    destination_path: String,
+) -> Result<Option<String>, String> {
+    log_message(
+        &app_handle,
+        format!(
+            "Checking local backup directory for existing config: {}",
+            destination_path
+        ),
+    );
+
+    let local_path = PathBuf::from(&destination_path);
+    if !local_path.exists() || !local_path.is_dir() {
+        return Ok(None);
+    }
+
+    let remote_config_path = local_path.join("config.json");
+    if !remote_config_path.exists() {
+        return Ok(None);
+    }
+
+    log_message(
+        &app_handle,
+        "Existing AtlasSave config found in local backup path. Importing configuration..."
+            .to_string(),
+    );
+
+    // 1. Read and parse remote config
+    let content = std::fs::read_to_string(&remote_config_path)
+        .map_err(|e| format!("Failed to read config from local backup path: {}", e))?;
+    let remote_config: Config = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config from local backup path: {}", e))?;
+
+    // 2. Merge config and save locally
+    let mut local_config_mgr = state.config_manager.lock().unwrap();
+
+    local_config_mgr.data.profiles = remote_config.profiles.clone();
+    local_config_mgr.data.global.max_backups = remote_config.global.max_backups;
+    local_config_mgr.data.global.debounce_seconds = remote_config.global.debounce_seconds;
+    if !remote_config.global.steamgriddb_api_key.is_empty() {
+        local_config_mgr.data.global.steamgriddb_api_key =
+            remote_config.global.steamgriddb_api_key.clone();
+    }
+
+    // Keep the local backup path configured
+    local_config_mgr.data.providers.local_backup.enabled = true;
+    local_config_mgr
+        .data
+        .providers
+        .local_backup
+        .destination_path = destination_path;
+    local_config_mgr.save();
+
+    let local_config = local_config_mgr.data.clone();
+    let backups_dir = local_config_mgr.backups_dir.clone();
+    drop(local_config_mgr); // Release lock
+
+    // 3. Copy backups from local backup path back to our local backups directory
+    log_message(
+        &app_handle,
+        "Importing backup archives from local secondary path...".to_string(),
+    );
+    for profile in &local_config.profiles {
+        let sanitized_name = crate::core::uploader::sanitize_profile_name(&profile.name);
+        let profile_backups_dir = backups_dir.join(&profile.id);
+        if let Err(e) = std::fs::create_dir_all(&profile_backups_dir) {
+            log_message(
+                &app_handle,
+                format!(
+                    "Failed to create backups folder for {}: {}",
+                    profile.name, e
+                ),
+            );
+            continue;
+        }
+
+        let prefix_manual = format!("{}_manual", sanitized_name);
+        let prefix_auto = format!("{}_auto", sanitized_name);
+
+        if let Ok(entries) = std::fs::read_dir(&local_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "zip") {
+                    if let Some(filename) = path.file_name() {
+                        let filename_str = filename.to_string_lossy();
+                        if filename_str.starts_with(&prefix_manual)
+                            || filename_str.starts_with(&prefix_auto)
+                            || filename_str.starts_with(&sanitized_name)
+                        {
+                            let dest_file = profile_backups_dir.join(filename);
+                            if !dest_file.exists() {
+                                let _ = std::fs::copy(&path, &dest_file);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Extract/Restore the latest backup for each active profile
+    log_message(
+        &app_handle,
+        "Restoring latest game saves to their directories...".to_string(),
+    );
+    let mut restored_profiles = Vec::new();
+    for profile in &local_config.profiles {
+        if !profile.enabled {
+            continue;
+        }
+        let profile_backups_dir = backups_dir.join(&profile.id);
+        if !profile_backups_dir.exists() {
+            continue;
+        }
+
+        let mut latest_zip: Option<(PathBuf, std::time::SystemTime)> = None;
+        if let Ok(entries) = std::fs::read_dir(&profile_backups_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "zip") {
+                    if let Ok(metadata) = entry.metadata() {
+                        if let Ok(mtime) = metadata.modified() {
+                            match &latest_zip {
+                                Some((_, old_mtime)) => {
+                                    if mtime > *old_mtime {
+                                        latest_zip = Some((path, mtime));
+                                    }
+                                }
+                                None => {
+                                    latest_zip = Some((path, mtime));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some((zip_path, _)) = latest_zip {
+            let source_path = PathBuf::from(&profile.source_path);
+            let zip_filename = zip_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            log_message(
+                &app_handle,
+                format!(
+                    "Restoring save files for profile: {} from {}",
+                    profile.name, zip_filename
+                ),
+            );
+
+            let extract_result = (|| -> Result<(), Box<dyn std::error::Error>> {
+                std::fs::create_dir_all(&source_path)?;
+                let file = std::fs::File::open(&zip_path)?;
+                let mut archive = zip::ZipArchive::new(file)?;
+                for i in 0..archive.len() {
+                    let mut file = archive.by_index(i)?;
+                    let outpath = match file.enclosed_name() {
+                        Some(path) => source_path.join(path),
+                        None => continue,
+                    };
+                    if file.name().ends_with('/') {
+                        std::fs::create_dir_all(&outpath)?;
+                    } else {
+                        if let Some(p) = outpath.parent() {
+                            if !p.exists() {
+                                std::fs::create_dir_all(p)?;
+                            }
+                        }
+                        let mut outfile = std::fs::File::create(&outpath)?;
+                        std::io::copy(&mut file, &mut outfile)?;
+                    }
+                }
+                Ok(())
+            })();
+
+            match extract_result {
+                Ok(_) => {
+                    log_message(
+                        &app_handle,
+                        format!(
+                            "[SUCCESS] Restored save files for profile: {}",
+                            profile.name
+                        ),
+                    );
+                    restored_profiles.push(profile.name.clone());
+                }
+                Err(e) => {
+                    log_message(
+                        &app_handle,
+                        format!(
+                            "[ERROR] Failed to restore save for profile {}: {}",
+                            profile.name, e
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    // 5. Reload watcher and trigger frontend updates
+    let mut watcher = state.watcher.lock().unwrap();
+    let is_active = *state.monitoring_active.lock().unwrap();
+    if is_active {
+        watcher.start(&local_config.profiles);
+    }
+
+    let _ = app_handle.emit("stats-updated", ());
+    let _ = app_handle.emit("backups-updated", ());
+
+    let count = local_config.profiles.len();
+    let msg = if restored_profiles.is_empty() {
+        format!("Imported configuration with {} profiles.", count)
+    } else {
+        format!(
+            "Imported configuration with {} profiles and restored save files for: {}.",
+            count,
+            restored_profiles.join(", ")
+        )
+    };
+
+    Ok(Some(msg))
+}
+
+#[tauri::command]
 pub fn toggle_monitoring(app_handle: AppHandle, state: State<'_, AppState>) -> bool {
-    let mut is_active = state.monitoring_active.lock().unwrap();
-    *is_active = !*is_active;
+    let is_active = {
+        let mut active = state.monitoring_active.lock().unwrap();
+        *active = !*active;
+        *active
+    };
 
     let config = state.config_manager.lock().unwrap();
     let mut watcher = state.watcher.lock().unwrap();
 
-    if *is_active {
+    if is_active {
         watcher.start(&config.data.profiles);
         log_message(&app_handle, "File monitoring engine activated.".to_string());
     } else {
@@ -701,7 +931,7 @@ pub fn toggle_monitoring(app_handle: AppHandle, state: State<'_, AppState>) -> b
         log_message(&app_handle, "File monitoring engine paused.".to_string());
     }
 
-    *is_active
+    is_active
 }
 
 #[tauri::command]
@@ -855,7 +1085,7 @@ fn fetch_cover_art_helper(game_name: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn fetch_game_cover_art(game_name: String) -> Result<String, String> {
+pub async fn fetch_game_cover_art(game_name: String) -> Result<String, String> {
     match fetch_cover_art_helper(&game_name) {
         Some(url) => Ok(url),
         None => {
@@ -1100,7 +1330,7 @@ fn search_steamgrid_covers(api_key: &str, term: &str) -> Result<Vec<CoverSearchR
 }
 
 #[tauri::command]
-pub fn search_game_covers(
+pub async fn search_game_covers(
     state: State<'_, AppState>,
     search_term: String,
 ) -> Result<Vec<CoverSearchResult>, String> {
@@ -1145,7 +1375,7 @@ pub struct BackupInfo {
 }
 
 #[tauri::command]
-pub fn get_backups(
+pub async fn get_backups(
     state: State<'_, AppState>,
     profile_id: String,
 ) -> Result<Vec<BackupInfo>, String> {
@@ -1561,7 +1791,7 @@ pub fn manual_backup_profile(
 }
 
 #[tauri::command]
-pub fn get_log_history(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+pub async fn get_log_history(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let config = state.config_manager.lock().unwrap();
     let log_file_path = config.config_dir.join("atlas_save.log");
 
@@ -1807,7 +2037,7 @@ pub struct StorageStats {
 }
 
 #[tauri::command]
-pub fn get_profile_storage_stats(
+pub async fn get_profile_storage_stats(
     state: State<'_, AppState>,
     profile_id: String,
 ) -> Result<StorageStats, String> {
@@ -1915,7 +2145,7 @@ pub struct DetectedGame {
 }
 
 #[tauri::command]
-pub fn scan_steam_library() -> Result<Vec<DetectedGame>, String> {
+pub async fn scan_steam_library() -> Result<Vec<DetectedGame>, String> {
     let mut detected_games = Vec::new();
 
     // 1. Get Steam installation path
@@ -2118,7 +2348,9 @@ pub struct SystemStorageStats {
 }
 
 #[tauri::command]
-pub fn get_system_storage_stats(state: State<'_, AppState>) -> Result<SystemStorageStats, String> {
+pub async fn get_system_storage_stats(
+    state: State<'_, AppState>,
+) -> Result<SystemStorageStats, String> {
     let (backups_dir, providers, total_size_mb) = {
         let config = state.config_manager.lock().unwrap();
         (

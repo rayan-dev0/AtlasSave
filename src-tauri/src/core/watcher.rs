@@ -41,15 +41,23 @@ impl SaveWatcher {
                     return;
                 }
 
-                let watches = active_watches_clone.lock().unwrap();
-                for path in &event.paths {
-                    for (profile_id, source_path) in watches.iter() {
-                        let watch_path = Path::new(source_path);
-                        if path.starts_with(watch_path) {
-                            (callback)(profile_id.clone());
-                            return; // Trigger once per event batch
+                let matched_profile_id = {
+                    let watches = active_watches_clone.lock().unwrap();
+                    let mut matched = None;
+                    'outer: for path in &event.paths {
+                        for (profile_id, source_path) in watches.iter() {
+                            let watch_path = Path::new(source_path);
+                            if path.starts_with(watch_path) {
+                                matched = Some(profile_id.clone());
+                                break 'outer;
+                            }
                         }
                     }
+                    matched
+                };
+
+                if let Some(profile_id) = matched_profile_id {
+                    (callback)(profile_id);
                 }
             }
         };

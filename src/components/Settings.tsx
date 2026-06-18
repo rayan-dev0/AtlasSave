@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { check } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 import { GlobalConfig } from '../types';
 import { THEMES } from '../libs/theme';
 
@@ -97,6 +99,45 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ globalConfig, onSa
   const [steamgriddbApiKey, setSteamgriddbApiKey] = useState(
     globalConfig.steamgriddb_api_key || ''
   );
+
+  // Update checker states
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState<any | null>(null);
+
+  const handleCheckForUpdates = async () => {
+    setCheckingUpdate(true);
+    setUpdateStatus('Contacting update server...');
+    setUpdateAvailable(null);
+    try {
+      const updateResult = await check();
+      if (updateResult) {
+        setUpdateAvailable(updateResult);
+        setUpdateStatus(`New update found: v${updateResult.version}`);
+      } else {
+        setUpdateStatus('AtlasSave is already running the latest version.');
+      }
+    } catch (err) {
+      console.error(err);
+      setUpdateStatus(`Update check failed: ${err}`);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    if (!updateAvailable) return;
+    setCheckingUpdate(true);
+    setUpdateStatus('Downloading and installing update. App will restart...');
+    try {
+      await updateAvailable.downloadAndInstall();
+      await relaunch();
+    } catch (err) {
+      console.error(err);
+      setUpdateStatus(`Installation failed: ${err}`);
+      setCheckingUpdate(false);
+    }
+  };
 
   // Tab State
   const [activeSubTab, setActiveSubTab] = useState<
@@ -862,6 +903,55 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ globalConfig, onSa
                     <span className="font-mono text-[10px] bg-cyan text-bg-dark px-3 py-0.5 rounded-full font-bold tracking-[0.5px] mt-2.5 shadow-sm">
                       v0.2.0-STABLE
                     </span>
+                  </div>
+
+                  {/* UPDATE MANAGER WIDGET */}
+                  <div className="bg-[#070c0c]/40 border border-tech-border/20 rounded-xl p-5 hover:border-cyan/15 transition-all duration-200 space-y-4">
+                    <div className="flex flex-col gap-0.5 border-b border-tech-border/10 pb-3">
+                      <span className="text-[12px] font-bold text-white uppercase tracking-[0.5px]">
+                        Software Update Center
+                      </span>
+                      <p className="text-[11px] text-gray mt-0.5">
+                        Scan the remote repository server for stable updates and rollbacks.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between flex-wrap gap-4 py-1">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[11px] font-semibold text-white">
+                          Current Version
+                        </span>
+                        <span className="font-mono text-xs text-gray">v0.2.0-STABLE</span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        {updateAvailable ? (
+                          <button
+                            type="button"
+                            onClick={handleInstallUpdate}
+                            disabled={checkingUpdate}
+                            className="px-4 py-2 font-sans font-bold text-[11px] rounded-lg cursor-pointer transition-all bg-green text-bg-dark hover:bg-[#59f8b4] shadow-[0_0_10px_rgba(89,248,180,0.3)] disabled:bg-tech-border/15 disabled:text-gray/50"
+                          >
+                            {checkingUpdate ? 'INSTALLING...' : 'INSTALL & RESTART'}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleCheckForUpdates}
+                            disabled={checkingUpdate}
+                            className="px-4 py-2 font-sans font-bold text-[11px] rounded-lg cursor-pointer transition-all border border-tech-border bg-transparent text-cyan hover:bg-cyan/5 hover:border-cyan disabled:border-tech-border/15 disabled:text-gray/50"
+                          >
+                            {checkingUpdate ? 'CHECKING...' : 'CHECK FOR UPDATES'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {updateStatus && (
+                      <div className="border border-tech-border/15 rounded-lg bg-black/20 p-3 text-[11px] font-mono text-cyan break-words">
+                        <span className="text-gray/50 mr-1.5">&gt;</span> {updateStatus}
+                      </div>
+                    )}
                   </div>
 
                   {/* Description Info card */}
